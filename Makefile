@@ -2,6 +2,7 @@
 all: firefly-wallet
 
 depend:
+	git submodule update --init --recursive
 	make -C extern/filecoin-ffi all
 
 clean:
