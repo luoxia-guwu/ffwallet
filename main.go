@@ -9,11 +9,13 @@ import (
 	"github.com/filecoin-project/firefly-wallet/mnemonic"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
+	"github.com/filecoin-project/lotus/lib/tablewriter"
 	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
 	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
 	"github.com/howeyc/gopass"
@@ -30,6 +32,7 @@ import (
 
 var localdb *db.LocalDb = nil
 var localMnenoic []byte
+var passwdValid=true
 
 const NEXT = "next"
 const encryptKey = "encryptText"
@@ -102,45 +105,6 @@ func signMessage(msg *types.Message) (*types.SignedMessage, error) {
 	return signMsg, nil
 }
 
-// 验证 助记词是否存在
-//func checkRepoPath(){
-//
-//
-//	r, err := repo.NewFS(repoPath)
-//	if err != nil {
-//		if strings.Compare(repoPath,defaultRepoPath)==0{
-//			fmt.Println("程序配置路径 ",repoPath," 异常")
-//			panic(err)
-//		}
-//		repoPath=defaultRepoPath
-//	}
-//
-//	r, err = repo.NewFS(repoPath)
-//	if err != nil {
-//		fmt.Println("程序配置路径 ",repoPath," 异常")
-//		panic(err)
-//	}
-//
-//	ok, err := r.Exists()
-//	if err != nil {
-//		fmt.Println("检测程序配置路径 ",repoPath," 异常")
-//		panic(err)
-//	}
-//
-//	if !ok {
-//		if err := r.Init(repo.Worker); err != nil {
-//			fmt.Println("初始化程序路径 ",repoPath," 异常")
-//			panic(err)
-//		}
-//	}
-//
-//	_, err = r.Lock(repo.Wallet)
-//	if err != nil {
-//		fmt.Println("锁定程序路径 ",repoPath," 异常")
-//		panic(err)
-//	}
-//}
-
 func _init() error {
 
 	if err := _initDb(); err != nil {
@@ -166,6 +130,10 @@ func _init() error {
 		fmt.Printf("读取助记词失败，err: %v\n", err)
 		return err
 	}
+
+	if valid:=impl.VerifyPassword(string(localMnenoic),0) ;!valid{
+		return fmt.Errorf("密码错误！")
+	}
 	return nil
 }
 
@@ -177,6 +145,7 @@ func main() {
 		sendCmd,
 		newAddressCmd,
 		exportAddressCmd,
+		listCmd,
 		//signCmd,
 	}
 
@@ -208,9 +177,16 @@ var exportAddressCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		return _init()
+		if err:=_init();err!=nil{
+			passwdValid=false
+		}
+		return nil
 	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 		address := cctx.String("address")
 		if address == "" {
 			fmt.Println("address is  empty")
@@ -263,9 +239,17 @@ var sendCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		return _init()
+		if err:=_init();err!=nil{
+			passwdValid=false
+		}
+		return nil
 	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
 		api, closer, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
 			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
@@ -342,9 +326,17 @@ var withdrawCmd = &cli.Command{
 	Usage:     "矿工提现,例如 withdraw f02420 100, 如果不填写提现金额，则提取miner所有余额",
 	ArgsUsage: "[minerId (eg f01000) ] [amount (FIL)]",
 	Before: func(context *cli.Context) error {
-		return _init()
+		if err:=_init();err!=nil{
+			passwdValid=false
+		}
+		return nil
 	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
 		/**
 		1 获取nonce，
 		2 签名，使用本地签名
@@ -464,9 +456,16 @@ var initCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		return _initDb()
+		if err:=_initDb();err!=nil{
+			passwdValid=false
+		}
+		return nil
 	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 
 		// 读取助记词
 		keyFileBytes, err := ioutil.ReadFile(cctx.String("key-file"))
@@ -490,7 +489,7 @@ var initCmd = &cli.Command{
 			return nil
 		}
 
-		fmt.Println("请再次输入密码：")
+		fmt.Print("请再次输入密码：")
 		passwdRe, err := gopass.GetPasswdMasked()
 		if err != nil {
 			fmt.Printf("输入密码异常，%v\n", err)
@@ -508,6 +507,8 @@ var initCmd = &cli.Command{
 			return err
 		}
 
+		// 初始化创建一个钱包地址,用于后续验证密码使用
+		createAddress(false, false)
 		return nil
 	},
 }
@@ -523,18 +524,149 @@ var newAddressCmd = &cli.Command{
 		},
 		&cli.BoolFlag{
 			Name:   "show-private-key",
-			Usage:  "创建bls类型的钱包地址",
+			Usage:  "显示私钥",
 			Value:  false,
 			Hidden: true,
 		},
 	},
 	Before: func(context *cli.Context) error {
-		return _init()
+		if err:=_init();err!=nil{
+			passwdValid=false
+		}
+		return nil
 	},
 	Action: func(context *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 
 		showPK := context.Bool("show-private-key")
 		createAddress(showPK, context.Bool("bls"))
+		return nil
+	},
+}
+
+
+var listCmd = &cli.Command{
+	Name:  "list",
+	Usage: "展示钱包列表",
+	Flags: []cli.Flag{
+		&cli.BoolFlag{
+			Name:    "addr-only",
+			Usage:   "只展示钱包地址",
+			Aliases: []string{"a"},
+		},
+		&cli.BoolFlag{
+			Name:    "id",
+			Usage:   "展示actorID",
+			Aliases: []string{"i"},
+		},
+		&cli.BoolFlag{
+			Name:    "market",
+			Usage:   "展示market余额",
+			Aliases: []string{"m"},
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err:=_init();err!=nil{
+			passwdValid=false
+			//panic(err)
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		if !passwdValid{
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+		api, closer, err := lcli.GetFullNodeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+		ctx := lcli.ReqContext(cctx)
+
+		//addrs, err := localWallet.WalletList(ctx)
+		addrs,err:=localdb.GetAll(db.KeyAddr)
+		if err != nil {
+			fmt.Println("读取数据库获取钱包地址失败")
+			return err
+		}
+
+		// Assume an error means no default key is set
+		def, _ := api.WalletDefaultAddress(ctx)
+
+		tw := tablewriter.New(
+			tablewriter.Col("Address"),
+			tablewriter.Col("ID"),
+			tablewriter.Col("Balance"),
+			tablewriter.Col("Market(Avail)"),
+			tablewriter.Col("Market(Locked)"),
+			tablewriter.Col("Nonce"),
+			tablewriter.Col("Default"),
+			tablewriter.NewLineCol("Error"))
+
+		for _, a := range addrs {
+			fa:=FilAddressInfo{}
+			json.Unmarshal([]byte(a),&fa)
+			addr,err:=address.NewFromString(fa.Address)
+			if err!=nil{
+				return err
+			}
+
+			if cctx.Bool("addr-only") {
+				fmt.Println(addr)
+			} else {
+				a, err := api.StateGetActor(ctx, addr, types.EmptyTSK)
+				if err != nil {
+					if !strings.Contains(err.Error(), "actor not found") {
+						tw.Write(map[string]interface{}{
+							"Address": addr,
+							"Error":   err,
+						})
+						continue
+					}
+
+					a = &types.Actor{
+						Balance: big.Zero(),
+					}
+				}
+
+				row := map[string]interface{}{
+					"Address": addr,
+					"Balance": types.FIL(a.Balance),
+					"Nonce":   a.Nonce,
+				}
+				if addr == def {
+					row["Default"] = "X"
+				}
+
+				if cctx.Bool("id") {
+					id, err := api.StateLookupID(ctx, addr, types.EmptyTSK)
+					if err != nil {
+						row["ID"] = "n/a"
+					} else {
+						row["ID"] = id
+					}
+				}
+
+				if cctx.Bool("market") {
+					mbal, err := api.StateMarketBalance(ctx, addr, types.EmptyTSK)
+					if err == nil {
+						row["Market(Avail)"] = types.FIL(types.BigSub(mbal.Escrow, mbal.Locked))
+						row["Market(Locked)"] = types.FIL(mbal.Locked)
+					}
+				}
+
+				tw.Write(row)
+			}
+		}
+
+		if !cctx.Bool("addr-only") {
+			return tw.Flush(os.Stdout)
+		}
+
 		return nil
 	},
 }
@@ -647,7 +779,7 @@ func generateFilAddress(showPK bool) {
 func getPassword() ([]byte, error) {
 	var passwd []byte
 	var err error
-	fmt.Println("请输入密码(长度至少6位):")
+	fmt.Print("请输入密码(长度至少6位):")
 	for tryTime := 3; tryTime > 0; tryTime-- {
 		passwd, err = gopass.GetPasswdMasked()
 		if err != nil {

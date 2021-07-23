@@ -97,6 +97,19 @@ func ExportSecp256k1Address(mnemonic string, userId int) (string, error) {
 	return exportWallet(priKey)
 }
 
+func VerifyPassword(mnemonic string, userId int)bool  {
+	dPath := fmt.Sprintf("%s%d", filPath, userId)
+
+	_, err := getPrivateKeyBytes(mnemonic, dPath)
+	if err != nil {
+		fmt.Printf("private key get err:%+v", err)
+		return false
+	}
+
+	return true
+
+}
+
 func exportWallet(priKey *ecdsa.PrivateKey) (string, error) {
 	privkey := make([]byte, PrivateKeyBytes)
 	blob := priKey.D.Bytes()

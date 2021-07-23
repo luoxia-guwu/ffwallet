@@ -13,7 +13,7 @@ func Decrypt(hiddenData, passwd []byte) ([]byte, error) {
 		return []byte{}, err
 	}
 	plainText, err := decryptData(hid.Mnemonic, passwd, hid.Salt, hid.Iv)
-	return plainText, nil
+	return plainText,err
 }
 
 func decryptData(cipherText, auth, salt, iv []byte) ([]byte, error) {
