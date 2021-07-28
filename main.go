@@ -87,7 +87,8 @@ func _initDb() error {
 func signMessage(msg *types.Message) (*types.SignedMessage, error) {
 	faiByte, err := localdb.Get(db.KeyAddr, msg.From.String())
 	if err != nil {
-		panic(err)
+		return &types.SignedMessage{}, err
+		//panic(err)
 	}
 
 	fai := FilAddressInfo{}
@@ -195,25 +196,29 @@ var exportAddressCmd = &cli.Command{
 
 		faiByte, err := localdb.Get(db.KeyAddr, address)
 		if err != nil {
-			panic(err)
+			fmt.Printf("从数据库读取钱包失败！,err: %v",err)
+			return nil
 		}
 
 		fai := FilAddressInfo{}
 		err = json.Unmarshal(faiByte, &fai)
 		if err != nil {
-			panic(err)
+			fmt.Printf("反序列化数据(%v)失败！,err: %v",faiByte,err)
+			return nil
 		}
 
 		var privKey string
 		if strings.HasPrefix(fai.Address, "f3") || strings.HasPrefix(fai.Address, "t3") {
 			privKey, err = impl.ExportBlsAddress(string(localMnenoic), fai.Index)
 			if err != nil {
-				panic(err)
+				fmt.Printf("导出BLS钱包失败！,err: %v",err)
+				return nil
 			}
 		} else {
 			privKey, err = impl.ExportSecp256k1Address(string(localMnenoic), fai.Index)
 			if err != nil {
-				panic(err)
+				fmt.Printf("导出Secp256钱包失败！,err: %v",err)
+				return nil
 			}
 		}
 
@@ -248,6 +253,12 @@ var sendCmd = &cli.Command{
 		if !passwdValid{
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
+		}
+
+		if cctx.String("from")==""||cctx.String("to")==""||cctx.String("amount")==""{
+
+			fmt.Println("必须指定--from，--to，--amount.")
+			return nil
 		}
 
 		api, closer, err := lcli.GetFullNodeAPI(cctx)
@@ -305,7 +316,8 @@ var sendCmd = &cli.Command{
 		// 签名
 		signMsg, err := signMessage(msg)
 		if err != nil {
-			return err
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
@@ -421,12 +433,13 @@ var withdrawCmd = &cli.Command{
 			return xerrors.Errorf("GasEstimateMessageGas error: %w", err)
 		}
 
-		fmt.Printf("\n%+v\n", msg)
+		fmt.Printf("\n%+x\n", msg)
 
 		// 签名
 		signMsg, err := signMessage(msg)
 		if err != nil {
-			return err
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
@@ -507,6 +520,18 @@ var initCmd = &cli.Command{
 			return err
 		}
 
+		encryptText, err := localdb.Get(db.KeyCommon, encryptKey)
+		if err != nil {
+			fmt.Printf("读取化DB失败，err: %v\n", err)
+			return err
+		}
+
+		localMnenoic, err = mnemonic.Decrypt(encryptText, passwd)
+		if err != nil {
+			fmt.Printf("读取助记词失败，err: %v\n", err)
+			return err
+		}
+
 		// 初始化创建一个钱包地址,用于后续验证密码使用
 		createAddress(false, false)
 		return nil
@@ -571,7 +596,6 @@ var listCmd = &cli.Command{
 	Before: func(context *cli.Context) error {
 		if err:=_init();err!=nil{
 			passwdValid=false
-			//panic(err)
 		}
 		return nil
 	},
@@ -582,6 +606,7 @@ var listCmd = &cli.Command{
 		}
 		api, closer, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
 			return err
 		}
 		defer closer()

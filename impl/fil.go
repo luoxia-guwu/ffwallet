@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	crypto2 "github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	ffi "github.com/filecoin-project/filecoin-ffi"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/crypto"
@@ -203,14 +204,16 @@ func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMe
 			return &types.SignedMessage{}, err
 		}
 
-		sig, err := crypto2.Sign(mb.Cid().Bytes(), priKey)
+
+		b2sum := blake2b.Sum256(mb.Cid().Bytes())
+		sig, err := crypto2.Sign(b2sum[:], priKey)
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
 			return &types.SignedMessage{}, err
 		}
 
 		sb = &crypto.Signature{
-			Type: crypto.SigTypeBLS,
+			Type: crypto.SigTypeSecp256k1,
 			Data: sig,
 		}
 	}
