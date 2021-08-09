@@ -43,6 +43,7 @@ const (
 	KeyAddr   KeyType = "filAddr"
 	KeyIndex  KeyType = "filIndex"
 	KeyCommon KeyType = "commonKey"
+	KeyPriKey KeyType = "filPriKey"
 )
 
 func (lb *LocalDb) getKey(keyType KeyType, key string) string {

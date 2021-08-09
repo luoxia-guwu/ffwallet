@@ -1,22 +1,24 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	crypto2 "github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	"github.com/filecoin-project/firefly-wallet/db"
 	"github.com/filecoin-project/firefly-wallet/impl"
 	"github.com/filecoin-project/firefly-wallet/mnemonic"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/lotus/build"
-	"github.com/filecoin-project/lotus/chain/actors"
-	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
-	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
 	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
 	"github.com/howeyc/gopass"
 	"github.com/mitchellh/go-homedir"
@@ -32,12 +34,14 @@ import (
 
 var localdb *db.LocalDb = nil
 var localMnenoic []byte
-var passwdValid=true
+var passwdValid = true
+var passwd []byte
 
 const NEXT = "next"
 const encryptKey = "encryptText"
 const repoENV = "LOTUS_WALLET_TOOL_PATH"
 const defaultRepoPath = "~/.lotuswallettool"
+const unRecoverIndex = -1 // 导入钱包地址index为0。
 
 //const signKeyFile = "sign.txt"
 
@@ -98,12 +102,91 @@ func signMessage(msg *types.Message) (*types.SignedMessage, error) {
 		return &types.SignedMessage{}, err
 	}
 
-	signMsg, err := impl.SignMessage(msg, string(localMnenoic), fai.Index)
-	if err != nil {
-		fmt.Printf("签名失败,err: %v\n", err)
+	// 导入钱包地址签名
+	if fai.Index == unRecoverIndex {
+		signMsg, err := unRecoverAddrSignMessage(msg, types.KeyType(fai.AddrType))
+		if err != nil {
+			fmt.Printf("签名失败,err: %v\n", err)
+		}
+
+		return signMsg, nil
+	} else {
+		// 派生钱包地址签名
+		signMsg, err := impl.SignMessage(msg, string(localMnenoic), fai.Index)
+		if err != nil {
+			fmt.Printf("签名失败,err: %v\n", err)
+		}
+
+		return signMsg, nil
 	}
 
-	return signMsg, nil
+}
+
+// 非派生钱包地址，即不可恢复钱包地址，签名
+func unRecoverAddrSignMessage(msg *types.Message, keyType types.KeyType) (*types.SignedMessage, error) {
+	encryptKey, err := localdb.Get(db.KeyPriKey, msg.From.String())
+	if err != nil {
+		fmt.Printf("从数据库读取钱包失败！,err: %v", err)
+		return &types.SignedMessage{}, err
+	}
+
+	inpdata, err := mnemonic.Decrypt(encryptKey, passwd)
+	if err != nil {
+		fmt.Printf("读取私钥出错,err: %v", err)
+		return &types.SignedMessage{}, err
+	}
+
+	var ki types.KeyInfo
+	data, err := hex.DecodeString(strings.TrimSpace(string(inpdata)))
+	if err != nil {
+		fmt.Println("输入的私钥格式不正确，解析出错！")
+		return &types.SignedMessage{}, err
+	}
+
+	if err := json.Unmarshal(data, &ki); err != nil {
+		fmt.Println("输入的私钥格式不正确，序列化出错！")
+		return &types.SignedMessage{}, err
+	}
+
+	mb, err := msg.ToStorageBlock()
+	if err != nil {
+		fmt.Printf("序列化消息失败， err:%v", err)
+		return &types.SignedMessage{}, xerrors.Errorf("serializing message: %w", err)
+	}
+
+	var sb *crypto.Signature
+	switch ki.Type {
+	case types.KTSecp256k1:
+		b2sum := blake2b.Sum256(mb.Cid().Bytes())
+
+		priKey, err := crypto2.ToECDSA(ki.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		sig, err := crypto2.Sign(b2sum[:], priKey)
+		if err != nil {
+			fmt.Printf("签名消息失败，err:%v", err)
+			return &types.SignedMessage{}, err
+		}
+
+		sb = &crypto.Signature{
+			Type: crypto.SigTypeSecp256k1,
+			Data: sig,
+		}
+	case types.KTBLS:
+		sb, err = impl.SignBls(ki.PrivateKey[:], mb.Cid().Bytes())
+		if err != nil {
+			fmt.Printf("签名消息失败，err:%v", err)
+			return &types.SignedMessage{}, err
+		}
+	default:
+		return nil, xerrors.Errorf("unsupported key type: %s", ki.Type)
+	}
+
+	return &types.SignedMessage{
+		Message:   *msg,
+		Signature: *sb,
+	}, nil
 }
 
 func _init() error {
@@ -120,7 +203,7 @@ func _init() error {
 	}
 
 	//fmt.Println(string(encryptText))
-	passwd, err := getPassword()
+	passwd, err = getPassword()
 	if err != nil {
 		fmt.Printf("输入密码异常，err: %v\n", err)
 		return err
@@ -132,7 +215,7 @@ func _init() error {
 		return err
 	}
 
-	if valid:=impl.VerifyPassword(string(localMnenoic),0) ;!valid{
+	if valid := impl.VerifyPassword(string(localMnenoic), 0); !valid {
 		return fmt.Errorf("密码错误！")
 	}
 	return nil
@@ -147,6 +230,7 @@ func main() {
 		newAddressCmd,
 		exportAddressCmd,
 		listCmd,
+		importAddressCmd,
 		//signCmd,
 	}
 
@@ -178,13 +262,13 @@ var exportAddressCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		if err:=_init();err!=nil{
-			passwdValid=false
+		if err := _init(); err != nil {
+			passwdValid = false
 		}
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		if !passwdValid{
+		if !passwdValid || len(passwd) < 1 {
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
@@ -196,29 +280,64 @@ var exportAddressCmd = &cli.Command{
 
 		faiByte, err := localdb.Get(db.KeyAddr, address)
 		if err != nil {
-			fmt.Printf("从数据库读取钱包失败！,err: %v",err)
+			fmt.Printf("从数据库读取钱包失败！,err: %v", err)
 			return nil
 		}
 
 		fai := FilAddressInfo{}
 		err = json.Unmarshal(faiByte, &fai)
 		if err != nil {
-			fmt.Printf("反序列化数据(%v)失败！,err: %v",faiByte,err)
+			fmt.Printf("反序列化数据(%v)失败！,err: %v", faiByte, err)
 			return nil
 		}
 
 		var privKey string
-		if strings.HasPrefix(fai.Address, "f3") || strings.HasPrefix(fai.Address, "t3") {
-			privKey, err = impl.ExportBlsAddress(string(localMnenoic), fai.Index)
+		if fai.Index == unRecoverIndex {
+			encryptKey, err := localdb.Get(db.KeyPriKey, address)
 			if err != nil {
-				fmt.Printf("导出BLS钱包失败！,err: %v",err)
+				fmt.Printf("从数据库读取钱包失败！,err: %v", err)
 				return nil
 			}
-		} else {
-			privKey, err = impl.ExportSecp256k1Address(string(localMnenoic), fai.Index)
+
+			inpdata, err := mnemonic.Decrypt(encryptKey, passwd)
 			if err != nil {
-				fmt.Printf("导出Secp256钱包失败！,err: %v",err)
+				fmt.Printf("读取私钥出错,err: %v", err)
 				return nil
+			}
+
+			var ki types.KeyInfo
+			data, err := hex.DecodeString(strings.TrimSpace(string(inpdata)))
+			if err != nil {
+				fmt.Println("输入的私钥格式不正确，解析出错！")
+				return err
+			}
+
+			if err := json.Unmarshal(data, &ki); err != nil {
+				fmt.Println("输入的私钥格式不正确，序列化出错！")
+				return err
+			}
+
+			b, err := json.Marshal(ki)
+			if err != nil {
+				fmt.Println("序列化私钥出错，原因:", err.Error())
+				return err
+			}
+
+			privKey = hex.EncodeToString(b)
+
+		} else {
+			if strings.HasPrefix(fai.Address, "f3") || strings.HasPrefix(fai.Address, "t3") {
+				privKey, err = impl.ExportBlsAddress(string(localMnenoic), fai.Index)
+				if err != nil {
+					fmt.Printf("导出BLS钱包失败！,err: %v", err)
+					return nil
+				}
+			} else {
+				privKey, err = impl.ExportSecp256k1Address(string(localMnenoic), fai.Index)
+				if err != nil {
+					fmt.Printf("导出Secp256钱包失败！,err: %v", err)
+					return nil
+				}
 			}
 		}
 
@@ -244,18 +363,18 @@ var sendCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		if err:=_init();err!=nil{
-			passwdValid=false
+		if err := _init(); err != nil {
+			passwdValid = false
 		}
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		if !passwdValid{
+		if !passwdValid {
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
 
-		if cctx.String("from")==""||cctx.String("to")==""||cctx.String("amount")==""{
+		if cctx.String("from") == "" || cctx.String("to") == "" || cctx.String("amount") == "" {
 
 			fmt.Println("必须指定--from，--to，--amount.")
 			return nil
@@ -333,128 +452,6 @@ var sendCmd = &cli.Command{
 	},
 }
 
-var withdrawCmd = &cli.Command{
-	Name:      "withdraw",
-	Usage:     "矿工提现,例如 withdraw f02420 100, 如果不填写提现金额，则提取miner所有余额",
-	ArgsUsage: "[minerId (eg f01000) ] [amount (FIL)]",
-	Before: func(context *cli.Context) error {
-		if err:=_init();err!=nil{
-			passwdValid=false
-		}
-		return nil
-	},
-	Action: func(cctx *cli.Context) error {
-		if !passwdValid{
-			fmt.Println("密码错误.")
-			return fmt.Errorf("密码错误")
-		}
-
-		/**
-		1 获取nonce，
-		2 签名，使用本地签名
-		3 使用fullnodeapi推送消息
-		*/
-
-		api, closer, err := lcli.GetFullNodeAPI(cctx)
-		if err != nil {
-			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
-			return err
-		}
-		defer closer()
-
-		ctx := lcli.ReqContext(cctx)
-
-		maddr, err := address.NewFromString(cctx.Args().First())
-		if err != nil {
-			fmt.Printf("输入miner ID(%s)不正确。 %v\n", cctx.Args().First(), err)
-			return err
-		}
-
-		// 用于根据 矿工获取矿工owner账户
-		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
-		if err != nil {
-			fmt.Printf("输入miner ID(%s)不正确。 %v\n", cctx.Args().First(), err)
-			return err
-		}
-
-		owner, err := api.StateAccountKey(ctx, mi.Owner, types.EmptyTSK)
-		if err != nil {
-			fmt.Printf("%s\t%s: error getting account key: %s\n", "owner", owner, err)
-			return err
-		}
-		//fmt.Printf("--->%+v", owner)
-
-		// 获取矿工可用余额
-		available, err := api.StateMinerAvailableBalance(ctx, maddr, types.EmptyTSK)
-		if err != nil {
-			fmt.Printf("读取矿工(%s)余额失败。 %v\n", cctx.Args().First(), err)
-			return err
-		}
-
-		amount := available
-		f, err := types.ParseFIL(cctx.Args().Get(1))
-		if err == nil {
-			amount = abi.TokenAmount(f)
-			//return xerrors.Errorf("parsing 'amount' argument: %w", err)
-		} else {
-			fmt.Printf("未指定提现 金额，将miner 所有可用余额（%s）提现，\n", amount)
-		}
-
-		if amount.GreaterThan(available) {
-			fmt.Printf("提现金额%s 超过miner可用余额(%s)，提现失败\n", amount, available)
-			return xerrors.Errorf("can't withdraw more funds than available; requested: %s; available: %s", amount, available)
-		}
-
-		// 获取nonce
-		a, err := api.StateGetActor(ctx, mi.Owner, types.EmptyTSK)
-		if err != nil {
-			fmt.Printf("读取获取owner地址的nonce失败，err:%v\n", err)
-			return err
-		}
-
-		params, err := actors.SerializeParams(&miner2.WithdrawBalanceParams{
-			AmountRequested: amount, // Default to attempting to withdraw all the extra funds in the miner actor
-		})
-		if err != nil {
-			fmt.Printf("序列化提现参数失败，err:%v\n", err)
-			return err
-		}
-
-		msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
-			To:     maddr,
-			From:   owner,
-			Value:  types.NewInt(0),
-			Method: miner.Methods.WithdrawBalance,
-			Nonce:  a.Nonce,
-			Params: params,
-		}, nil, types.EmptyTSK)
-		if err != nil {
-			fmt.Printf("评估消息的gas费用失败， err:%v\n", err)
-			return xerrors.Errorf("GasEstimateMessageGas error: %w", err)
-		}
-
-		fmt.Printf("\n%+x\n", msg)
-
-		// 签名
-		signMsg, err := signMessage(msg)
-		if err != nil {
-			fmt.Printf("签名失败， err:%v\n", err)
-			return xerrors.Errorf("签名失败: %w", err)
-		}
-
-		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
-		if err != nil {
-			fmt.Printf("推送消息上链失败，err:%v\n", err)
-			return err
-		}
-
-		fmt.Printf("Requested rewards withdrawal in message %s\n", cid.String())
-
-		return nil
-	},
-}
-
 var initCmd = &cli.Command{
 	Name:  "init",
 	Usage: "初始化配置钱包助记词，用于后续签名，第一次使用本工具必须先执行此命令初始化。助记词会通过输入密码加密保存，后面启动无需再次输入助记词。只需输入密码即可。",
@@ -469,13 +466,13 @@ var initCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		if err:=_initDb();err!=nil{
-			passwdValid=false
+		if err := _initDb(); err != nil {
+			passwdValid = false
 		}
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		if !passwdValid{
+		if !passwdValid {
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
@@ -555,13 +552,13 @@ var newAddressCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		if err:=_init();err!=nil{
-			passwdValid=false
+		if err := _init(); err != nil {
+			passwdValid = false
 		}
 		return nil
 	},
 	Action: func(context *cli.Context) error {
-		if !passwdValid{
+		if !passwdValid {
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
@@ -572,6 +569,138 @@ var newAddressCmd = &cli.Command{
 	},
 }
 
+var importAddressCmd = &cli.Command{
+	Name:      "import",
+	Usage:     "导入钱包地址，注意：导入的钱包地址请因不是助记词派生的地址，无法通过助记词找回来。",
+	ArgsUsage: "[<path> (optional, will read from stdin if omitted)]",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "format",
+			Usage: "specify input format for key",
+			Value: "hex-lotus",
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		if !passwdValid || len(passwd) < 1 {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
+		var inpdata []byte
+		if !cctx.Args().Present() || cctx.Args().First() == "-" {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("请输入私钥: ")
+			indata, err := reader.ReadBytes('\n')
+			if err != nil {
+				return err
+			}
+			inpdata = indata
+
+		} else {
+			fdata, err := ioutil.ReadFile(cctx.Args().First())
+			if err != nil {
+				return err
+			}
+			inpdata = fdata
+		}
+
+		var ki types.KeyInfo
+		switch cctx.String("format") {
+		case "hex-lotus":
+			data, err := hex.DecodeString(strings.TrimSpace(string(inpdata)))
+			if err != nil {
+				fmt.Println("输入的私钥格式不正确，解析出错！")
+				return err
+			}
+
+			if err := json.Unmarshal(data, &ki); err != nil {
+				fmt.Println("输入的私钥格式不正确，序列化出错！")
+				return err
+			}
+		case "json-lotus":
+			if err := json.Unmarshal(inpdata, &ki); err != nil {
+				fmt.Println("输入的json格式的私钥格式不正确，序列化出错！")
+				return err
+			}
+		case "gfc-json":
+			var f struct {
+				KeyInfo []struct {
+					PrivateKey []byte
+					SigType    int
+				}
+			}
+			if err := json.Unmarshal(inpdata, &f); err != nil {
+				fmt.Println("输入的gfc格式的私钥格式不正确，序列化出错！")
+				return xerrors.Errorf("failed to parse go-filecoin key: %s", err)
+			}
+
+			gk := f.KeyInfo[0]
+			ki.PrivateKey = gk.PrivateKey
+			switch gk.SigType {
+			case 1:
+				ki.Type = types.KTSecp256k1
+			case 2:
+				ki.Type = types.KTBLS
+			default:
+				fmt.Println("解析私钥 信息失败，无法识别的私钥类型!!")
+				return fmt.Errorf("unrecognized key type: %d", gk.SigType)
+			}
+		default:
+			fmt.Println("解析私钥 信息失败，不识别的格式!!")
+			return fmt.Errorf("unrecognized format: %s", cctx.String("format"))
+		}
+
+		//api, closer, err := lcli.GetFullNodeAPI(cctx)
+		//if err != nil {
+		//	fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
+		//	return err
+		//}
+		//defer closer()
+		//ctx := lcli.ReqContext(cctx)
+
+		// 解析出addr
+		key, err := impl.NewKey(&ki)
+		if err != nil {
+			fmt.Println("创建钱包地址失败 ,原因：", err.Error())
+			return err
+		}
+
+		filInfo := FilAddressInfo{Address: key.Address.String(), Index: unRecoverIndex, AddrType: string(key.Type)}
+		filInfoByte, err := json.Marshal(&filInfo)
+		if err != nil {
+			fmt.Println("序列化filInfo失败!")
+			return err
+		}
+
+		err = localdb.Add(db.KeyAddr, key.Address.String(), filInfoByte)
+		if err != nil {
+			fmt.Println("保存钱包地址到数据异常，原因：", err.Error())
+			return err
+		}
+
+		// 保存privateKey,到数据库
+		encryData, err := mnemonic.EncryptData(inpdata, passwd)
+		if err != nil {
+			fmt.Println("加密私钥失败！原因：", err.Error())
+			return err
+		}
+
+		err = localdb.Add(db.KeyPriKey, key.Address.String(), encryData)
+		if err != nil {
+			fmt.Println("保存钱包地址到数据异常，原因：", err.Error())
+			return err
+		}
+
+		fmt.Println("成功导入钱包：", key.Address.String())
+		return nil
+	},
+}
 
 var listCmd = &cli.Command{
 	Name:  "list",
@@ -594,13 +723,13 @@ var listCmd = &cli.Command{
 		},
 	},
 	Before: func(context *cli.Context) error {
-		if err:=_init();err!=nil{
-			passwdValid=false
+		if err := _init(); err != nil {
+			passwdValid = false
 		}
 		return nil
 	},
 	Action: func(cctx *cli.Context) error {
-		if !passwdValid{
+		if !passwdValid {
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
@@ -613,7 +742,7 @@ var listCmd = &cli.Command{
 		ctx := lcli.ReqContext(cctx)
 
 		//addrs, err := localWallet.WalletList(ctx)
-		addrs,err:=localdb.GetAll(db.KeyAddr)
+		addrs, err := localdb.GetAll(db.KeyAddr)
 		if err != nil {
 			fmt.Println("读取数据库获取钱包地址失败")
 			return err
@@ -633,10 +762,10 @@ var listCmd = &cli.Command{
 			tablewriter.NewLineCol("Error"))
 
 		for _, a := range addrs {
-			fa:=FilAddressInfo{}
-			json.Unmarshal([]byte(a),&fa)
-			addr,err:=address.NewFromString(fa.Address)
-			if err!=nil{
+			fa := FilAddressInfo{}
+			json.Unmarshal([]byte(a), &fa)
+			addr, err := address.NewFromString(fa.Address)
+			if err != nil {
 				return err
 			}
 
@@ -705,6 +834,7 @@ func createAddress(show, bls bool) {
 		generateFilAddress(show)
 	}
 }
+
 func getNextIndex() int {
 
 	strIndex, err := localdb.Get(db.KeyIndex, NEXT)

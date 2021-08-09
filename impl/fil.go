@@ -98,7 +98,7 @@ func ExportSecp256k1Address(mnemonic string, userId int) (string, error) {
 	return exportWallet(priKey)
 }
 
-func VerifyPassword(mnemonic string, userId int)bool  {
+func VerifyPassword(mnemonic string, userId int) bool {
 	dPath := fmt.Sprintf("%s%d", filPath, userId)
 
 	_, err := getPrivateKeyBytes(mnemonic, dPath)
@@ -192,7 +192,7 @@ func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMe
 		}
 
 		//sb, err = sigs.Sign(crypto.SigTypeBLS, privKey[:], mb.Cid().Bytes())
-		sb, err = signBls(privKey[:], mb.Cid().Bytes())
+		sb, err = SignBls(privKey[:], mb.Cid().Bytes())
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
 			return &types.SignedMessage{}, err
@@ -203,7 +203,6 @@ func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMe
 			fmt.Printf("private key get err:%+v", err)
 			return &types.SignedMessage{}, err
 		}
-
 
 		b2sum := blake2b.Sum256(mb.Cid().Bytes())
 		sig, err := crypto2.Sign(b2sum[:], priKey)
@@ -225,7 +224,7 @@ func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMe
 
 }
 
-func signBls(p []byte, msg []byte) (*crypto.Signature, error) {
+func SignBls(p []byte, msg []byte) (*crypto.Signature, error) {
 	if p == nil || len(p) != ffi.PrivateKeyBytes {
 		return nil, fmt.Errorf("bls signature invalid private key")
 	}
@@ -239,4 +238,48 @@ func signBls(p []byte, msg []byte) (*crypto.Signature, error) {
 		Type: crypto.SigTypeBLS,
 		Data: sig[:],
 	}, nil
+}
+
+type Key struct {
+	types.KeyInfo
+
+	Address address.Address
+}
+
+func NewKey(ki *types.KeyInfo) (*Key, error) {
+	k := &Key{
+		KeyInfo: *ki,
+	}
+
+	switch k.Type {
+	case types.KTSecp256k1:
+		toECDSA, err := crypto2.ToECDSA(k.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+
+		addr, err := generateSecp256addr(toECDSA)
+		if err != nil {
+			return nil, err
+		}
+
+		k.Address, err = address.NewFromString(addr)
+		if err != nil {
+			return nil, err
+		}
+	case types.KTBLS:
+		addr, err := generateBlsAddr(k.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+
+		k.Address, err = address.NewFromString(addr)
+		if err != nil {
+			return nil, err
+		}
+
+	default:
+		return nil, xerrors.Errorf("unsupported key type: %s", k.Type)
+	}
+	return k, nil
 }
