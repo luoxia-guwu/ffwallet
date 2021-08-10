@@ -23,12 +23,23 @@ var withdrawCmd = &cli.Command{
 	Name:      "withdraw",
 	Usage:     "矿工提现,例如 withdraw f02420 100, 如果不填写提现金额，则提取miner所有余额",
 	ArgsUsage: "[minerId (eg f01000) ] [amount (FIL)]",
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
 	Action: func(cctx *cli.Context) error {
 		/**
 		1 获取nonce，
 		2 签名，使用本地签名
 		3 使用fullnodeapi推送消息
 		*/
+
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 
 		api, closer, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
@@ -110,14 +121,21 @@ var withdrawCmd = &cli.Command{
 
 		fmt.Printf("\n%+v\n", msg)
 
-		// 签名
-		signMsg, err := signMessage(msg)
+		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			return err
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
+		// 签名
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+		if err != nil {
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
 		if err != nil {
 			fmt.Printf("推送消息上链失败，err:%v\n", err)
 			return err
@@ -133,6 +151,12 @@ var controlSetCmd = &cli.Command{
 	Name:      "control-set",
 	Usage:     "Set control address(-es)",
 	ArgsUsage: "[minerId (eg. f021704)] [...address]",
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "really-do-it",
@@ -146,6 +170,10 @@ var controlSetCmd = &cli.Command{
 		//	return err
 		//}
 		//defer closer()
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
@@ -253,14 +281,21 @@ var controlSetCmd = &cli.Command{
 
 		fmt.Printf("\n%+v\n", msg)
 
-		// 签名
-		signMsg, err := signMessage(msg)
+		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			return err
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
+		// 签名
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+		if err != nil {
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
 		if err != nil {
 			fmt.Printf("推送消息上链失败，err:%v\n", err)
 			return err
@@ -273,22 +308,33 @@ var controlSetCmd = &cli.Command{
 }
 var setOwnerCmd = &cli.Command{
 	Name:      "set-owner",
-	Usage:     "Set owner address (this command should be invoked twice, first with the old owner as the senderAddress, and then with the new owner)",
-	ArgsUsage: "[newOwnerAddress senderAddress]",
+	Usage:     "设置矿工的owner地址 (设置过程中这个命令需要被执行两次, 第一次用旧的ownr地址发送, 第二次用新的owner地址发送)",
+	ArgsUsage: "[miner 新owner地址 发送地址]",
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "really-do-it",
-			Usage: "Actually send transaction performing the action",
+			Usage: "确定命令，防止误操作",
 			Value: false,
 		},
 	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 		if !cctx.Bool("really-do-it") {
 			fmt.Println("Pass --really-do-it to actually execute this action")
 			return nil
 		}
 
 		if cctx.NArg() != 3 {
+			fmt.Println("必须输入矿工编号，新的owner地址，和发送钱包地址")
 			return fmt.Errorf("must pass miner id, new owner address and sender address")
 		}
 
@@ -300,6 +346,7 @@ var setOwnerCmd = &cli.Command{
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
 			return err
 		}
 		defer acloser()
@@ -308,53 +355,61 @@ var setOwnerCmd = &cli.Command{
 
 		na, err := address.NewFromString(cctx.Args().Get(1))
 		if err != nil {
+			fmt.Printf("解析新的owner地址失败。%v\n", err)
 			return err
 		}
 
 		newAddrId, err := api.StateLookupID(ctx, na, types.EmptyTSK)
 		if err != nil {
+			fmt.Printf("读取新owner地址链上状态失败。%v\n", err)
 			return err
 		}
 
 		fa, err := address.NewFromString(cctx.Args().Get(2))
 		if err != nil {
+			fmt.Printf("解析新的发送地址失败。%v\n", err)
 			return err
 		}
 
 		fromAddrId, err := api.StateLookupID(ctx, fa, types.EmptyTSK)
 		if err != nil {
+			fmt.Printf("读取新发送地址链上状态失败。%v\n", err)
 			return err
 		}
 
 		//maddr, err := nodeApi.ActorAddress(ctx)
 		maddr, err := address.NewFromString(cctx.Args().First())
 		if err != nil {
+			fmt.Println("读取矿工地址失败", err)
 			return err
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println("从链上读取矿工状态失败", err)
 			return err
 		}
 
 		if fromAddrId != mi.Owner && fromAddrId != newAddrId {
+			fmt.Println("发送地址必须为新的owner地址或者旧的owner地址")
 			return xerrors.New("from address must either be the old owner or the new owner")
 		}
 
 		sp, err := actors.SerializeParams(&newAddrId)
 		if err != nil {
+			fmt.Println("序列化发送参数失败", err)
 			return xerrors.Errorf("serializing params: %w", err)
 		}
 
 		// 获取nonce
-		a, err := api.StateGetActor(ctx, mi.Owner, types.EmptyTSK)
+		a, err := api.StateGetActor(ctx, fromAddrId, types.EmptyTSK)
 		if err != nil {
 			fmt.Printf("读取获取owner地址的nonce失败，err:%v\n", err)
 			return err
 		}
 
 		msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
-			From:   fromAddrId,
+			From:   fa,
 			To:     maddr,
 			Method: miner.Methods.ChangeOwnerAddress,
 			Value:  big.Zero(),
@@ -362,19 +417,27 @@ var setOwnerCmd = &cli.Command{
 			Nonce:  a.Nonce,
 		}, nil, types.EmptyTSK)
 		if err != nil {
+			fmt.Println("评估消息gas失败，", err)
 			return xerrors.Errorf("mpool push: %w", err)
 		}
 
 		fmt.Printf("\n%+v\n", msg)
 
-		// 签名
-		signMsg, err := signMessage(msg)
+		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			return err
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
+		// 签名
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+		if err != nil {
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
 		if err != nil {
 			fmt.Printf("推送消息上链失败，err:%v\n", err)
 			return err
@@ -385,16 +448,17 @@ var setOwnerCmd = &cli.Command{
 		// wait for it to get mined into a block
 		wait, err := api.StateWaitMsg(ctx, cid, build.MessageConfidence)
 		if err != nil {
+			fmt.Println("等效消息返回失败,", err)
 			return err
 		}
 
 		// check it executed successfully
 		if wait.Receipt.ExitCode != 0 {
-			fmt.Println("owner change failed!")
+			fmt.Println("发送修改owner地址失败!")
 			return err
 		}
 
-		fmt.Println("message succeeded!")
+		fmt.Println("消息发送成功！")
 
 		return nil
 	},
@@ -413,9 +477,18 @@ var controlListCmd = &cli.Command{
 			Value: true,
 		},
 	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
 	Action: func(cctx *cli.Context) error {
 		color.NoColor = !cctx.Bool("color")
-
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 		//nodeApi, closer, err := GetStorageMinerAPI(cctx)
 		//if err != nil {
 		//	return err
@@ -569,7 +642,17 @@ var proposeChangeWorker = &cli.Command{
 			Value: false,
 		},
 	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
 	Action: func(cctx *cli.Context) error {
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
 		if !cctx.Args().Present() {
 			return fmt.Errorf("must pass address of new worker address")
 		}
@@ -657,14 +740,21 @@ var proposeChangeWorker = &cli.Command{
 
 		fmt.Printf("\n%+v\n", msg)
 
-		// 签名
-		signMsg, err := signMessage(msg)
+		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			return err
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
+		// 签名
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+		if err != nil {
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
 		if err != nil {
 			fmt.Printf("推送消息上链失败，err:%v\n", err)
 			return err

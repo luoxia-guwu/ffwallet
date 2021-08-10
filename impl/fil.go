@@ -176,39 +176,34 @@ func generateBlsAddr(priv []byte) (string, error) {
 	return blsaddr.String(), nil
 }
 
-func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMessage, error) {
-	mb, err := msg.ToStorageBlock()
-	if err != nil {
-		fmt.Printf("序列化消息失败， err:%v", err)
-		return &types.SignedMessage{}, xerrors.Errorf("serializing message: %w", err)
-	}
+func Sign(msg []byte, addr address.Address, mnenoic string, index int) (*crypto.Signature, error) {
 
 	var sb *crypto.Signature
-	if strings.HasPrefix(msg.From.String(), "f3") || strings.HasPrefix(msg.From.String(), "t3") {
+	if strings.HasPrefix(addr.String(), "f3") || strings.HasPrefix(addr.String(), "t3") {
 		privKey, err := generateBLSPriviteKey(mnenoic, index)
 		if err != nil {
 			fmt.Printf("private key get err:%+v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 
 		//sb, err = sigs.Sign(crypto.SigTypeBLS, privKey[:], mb.Cid().Bytes())
-		sb, err = SignBls(privKey[:], mb.Cid().Bytes())
+		sb, err = SignBls(privKey[:], msg)
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 	} else {
 		priKey, err := generateSecp256k1PriviteKey(mnenoic, index)
 		if err != nil {
 			fmt.Printf("private key get err:%+v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 
-		b2sum := blake2b.Sum256(mb.Cid().Bytes())
+		b2sum := blake2b.Sum256(msg)
 		sig, err := crypto2.Sign(b2sum[:], priKey)
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 
 		sb = &crypto.Signature{
@@ -217,10 +212,7 @@ func SignMessage(msg *types.Message, mnenoic string, index int) (*types.SignedMe
 		}
 	}
 
-	return &types.SignedMessage{
-		Message:   *msg,
-		Signature: *sb,
-	}, nil
+	return sb, nil
 
 }
 

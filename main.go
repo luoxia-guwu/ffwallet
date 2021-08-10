@@ -15,7 +15,6 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/crypto"
-	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
@@ -89,10 +88,11 @@ func _initDb() error {
 	return err
 }
 
-func signMessage(msg *types.Message) (*types.SignedMessage, error) {
-	faiByte, err := localdb.Get(db.KeyAddr, msg.From.String())
+func signMessage(msg []byte, addr address.Address) (*crypto.Signature, error) {
+	faiByte, err := localdb.Get(db.KeyAddr, addr.String())
 	if err != nil {
-		return &types.SignedMessage{}, err
+		fmt.Println("db中读取钱包地址", addr.String())
+		return &crypto.Signature{}, err
 		//panic(err)
 	}
 
@@ -100,64 +100,64 @@ func signMessage(msg *types.Message) (*types.SignedMessage, error) {
 	err = json.Unmarshal(faiByte, &fai)
 	if err != nil {
 		fmt.Printf("解析数据库信息是失败, err:%v\n", err)
-		return &types.SignedMessage{}, err
+		return &crypto.Signature{}, err
 	}
+
+	//mb, err := msg.ToStorageBlock()
+	//if err != nil {
+	//	fmt.Printf("序列化消息失败， err:%v", err)
+	//	return &crypto.Signature{}, xerrors.Errorf("serializing message: %w", err)
+	//}
 
 	// 导入钱包地址签名
 	if fai.Index == unRecoverIndex {
-		signMsg, err := unRecoverAddrSignMessage(msg, types.KeyType(fai.AddrType))
+		sb, err := unRecoverAddrSign(msg, addr)
 		if err != nil {
 			fmt.Printf("签名失败,err: %v\n", err)
 		}
 
-		return signMsg, nil
+		return sb, nil
 	} else {
 		// 派生钱包地址签名
-		signMsg, err := impl.SignMessage(msg, string(localMnenoic), fai.Index)
+		sb, err := impl.Sign(msg, addr, string(localMnenoic), fai.Index)
 		if err != nil {
 			fmt.Printf("签名失败,err: %v\n", err)
 		}
 
-		return signMsg, nil
+		return sb, nil
 	}
 }
 
 // 非派生钱包地址，即不可恢复钱包地址，签名
-func unRecoverAddrSignMessage(msg *types.Message, keyType types.KeyType) (*types.SignedMessage, error) {
-	encryptKey, err := localdb.Get(db.KeyPriKey, msg.From.String())
+func unRecoverAddrSign(msg []byte, addr address.Address) (*crypto.Signature, error) {
+	encryptKey, err := localdb.Get(db.KeyPriKey, addr.String())
 	if err != nil {
 		fmt.Printf("从数据库读取钱包失败！,err: %v", err)
-		return &types.SignedMessage{}, err
+		return &crypto.Signature{}, err
 	}
 
 	inpdata, err := mnemonic.Decrypt(encryptKey, passwd)
 	if err != nil {
 		fmt.Printf("读取私钥出错,err: %v", err)
-		return &types.SignedMessage{}, err
+		return &crypto.Signature{}, err
 	}
 
 	var ki types.KeyInfo
 	data, err := hex.DecodeString(strings.TrimSpace(string(inpdata)))
 	if err != nil {
 		fmt.Println("输入的私钥格式不正确，解析出错！")
-		return &types.SignedMessage{}, err
+		return &crypto.Signature{}, err
 	}
 
 	if err := json.Unmarshal(data, &ki); err != nil {
 		fmt.Println("输入的私钥格式不正确，序列化出错！")
-		return &types.SignedMessage{}, err
-	}
-
-	mb, err := msg.ToStorageBlock()
-	if err != nil {
-		fmt.Printf("序列化消息失败， err:%v", err)
-		return &types.SignedMessage{}, xerrors.Errorf("serializing message: %w", err)
+		return &crypto.Signature{}, err
 	}
 
 	var sb *crypto.Signature
 	switch ki.Type {
 	case types.KTSecp256k1:
-		b2sum := blake2b.Sum256(mb.Cid().Bytes())
+		b2sum := blake2b.Sum256(msg)
 
 		priKey, err := crypto2.ToECDSA(ki.PrivateKey)
 		if err != nil {
@@ -166,7 +166,7 @@ func unRecoverAddrSignMessage(msg *types.Message, keyType types.KeyType) (*types
 		sig, err := crypto2.Sign(b2sum[:], priKey)
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 
 		sb = &crypto.Signature{
@@ -174,19 +174,16 @@ func unRecoverAddrSignMessage(msg *types.Message, keyType types.KeyType) (*types
 			Data: sig,
 		}
 	case types.KTBLS:
-		sb, err = impl.SignBls(ki.PrivateKey[:], mb.Cid().Bytes())
+		sb, err = impl.SignBls(ki.PrivateKey[:], msg)
 		if err != nil {
 			fmt.Printf("签名消息失败，err:%v", err)
-			return &types.SignedMessage{}, err
+			return &crypto.Signature{}, err
 		}
 	default:
 		return nil, xerrors.Errorf("unsupported key type: %s", ki.Type)
 	}
 
-	return &types.SignedMessage{
-		Message:   *msg,
-		Signature: *sb,
-	}, nil
+	return sb, nil
 }
 
 func _init() error {
@@ -232,6 +229,9 @@ func main() {
 		listCmd,
 		importAddressCmd,
 		signCmd,
+		setOwnerCmd,
+		//controlListCmd,
+		//controlSetCmd,
 	}
 
 	app := &cli.App{
@@ -436,15 +436,21 @@ var sendCmd = &cli.Command{
 			return xerrors.Errorf("GasEstimateMessageGas error: %w", err)
 		}
 
+		mb, err := msg.ToStorageBlock()
+		if err != nil {
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
 		// 签名
-		signMsg, err := signMessage(msg)
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
 		if err != nil {
 			fmt.Printf("签名失败， err:%v\n", err)
 			return xerrors.Errorf("签名失败: %w", err)
 		}
 
 		// 推送消息
-		cid, err := api.MpoolPush(ctx, signMsg)
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
 		if err != nil {
 			fmt.Printf("推送消息上链失败，err:%v\n", err)
 			return err
@@ -868,7 +874,7 @@ var signCmd = &cli.Command{
 			return err
 		}
 
-		sig, err := api.WalletSign(ctx, addr, msg)
+		sig, err := signMessage(msg, addr)
 		if err != nil {
 			return err
 		}
