@@ -15,6 +15,7 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/crypto"
+	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
@@ -119,7 +120,6 @@ func signMessage(msg *types.Message) (*types.SignedMessage, error) {
 
 		return signMsg, nil
 	}
-
 }
 
 // 非派生钱包地址，即不可恢复钱包地址，签名
@@ -231,7 +231,7 @@ func main() {
 		exportAddressCmd,
 		listCmd,
 		importAddressCmd,
-		//signCmd,
+		signCmd,
 	}
 
 	app := &cli.App{
@@ -419,12 +419,16 @@ var sendCmd = &cli.Command{
 		msg.Method = builtin.MethodSend
 
 		// 获取nonce
-		a, err := api.StateGetActor(ctx, msg.From, types.EmptyTSK)
+		msg.Nonce, err = api.MpoolGetNonce(ctx, msg.From)
 		if err != nil {
-			fmt.Printf("读取获取owner地址的nonce失败，err:%v\n", err)
-			return err
+			fmt.Printf("读取获取消息池中的的nonce失败，err:%v\n", err)
+			a, err := api.StateGetActor(ctx, msg.From, types.EmptyTSK)
+			if err != nil {
+				fmt.Printf("读取获取链数据上的的nonce失败，err:%v\n", err)
+				return err
+			}
+			msg.Nonce = a.Nonce
 		}
-		msg.Nonce = a.Nonce
 
 		msg, err = api.GasEstimateMessageGas(ctx, msg, nil, types.EmptyTSK)
 		if err != nil {
@@ -571,7 +575,7 @@ var newAddressCmd = &cli.Command{
 
 var importAddressCmd = &cli.Command{
 	Name:      "import",
-	Usage:     "导入钱包地址，注意：导入的钱包地址请因不是助记词派生的地址，无法通过助记词找回来。",
+	Usage:     "导入钱包地址，注意：导入的钱包地址,因不是助记词派生的地址，无法通过助记词找回来。",
 	ArgsUsage: "[<path> (optional, will read from stdin if omitted)]",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
@@ -821,6 +825,57 @@ var listCmd = &cli.Command{
 			return tw.Flush(os.Stdout)
 		}
 
+		return nil
+	},
+}
+
+var signCmd = &cli.Command{
+	Name:      "sign",
+	Usage:     "签名消息命令",
+	ArgsUsage: "<signing address> <hexMessage>",
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		//api, closer, err := GetFullNodeAPI(cctx)
+		//if err != nil {
+		//	return err
+		//}
+		//defer closer()
+		//ctx := ReqContext(cctx)
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
+		if !cctx.Args().Present() || cctx.NArg() != 2 {
+			fmt.Println("必须指定签名钱包地址和要签名的消息")
+			return fmt.Errorf("必须指定签名钱包地址和要签名的消息")
+		}
+
+		addr, err := address.NewFromString(cctx.Args().First())
+		if err != nil {
+			fmt.Println("输入签名的钱包地址异常,", err)
+			return err
+		}
+
+		msg, err := hex.DecodeString(cctx.Args().Get(1))
+		if err != nil {
+			fmt.Println("解析要签名的内容异常,", err)
+			return err
+		}
+
+		sig, err := api.WalletSign(ctx, addr, msg)
+		if err != nil {
+			return err
+		}
+
+		sigBytes := append([]byte{byte(sig.Type)}, sig.Data...)
+
+		fmt.Println(hex.EncodeToString(sigBytes))
 		return nil
 	},
 }
