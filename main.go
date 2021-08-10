@@ -230,6 +230,7 @@ func main() {
 		importAddressCmd,
 		signCmd,
 		setOwnerCmd,
+		proposeChangeWorker,
 		//controlListCmd,
 		//controlSetCmd,
 	}

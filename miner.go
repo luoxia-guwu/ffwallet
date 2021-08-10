@@ -633,12 +633,12 @@ var controlListCmd = &cli.Command{
 
 var proposeChangeWorker = &cli.Command{
 	Name:      "propose-change-worker",
-	Usage:     "Propose a worker address change",
-	ArgsUsage: "[minerId,address]",
+	Usage:     "修改worker钱包地址,（worker的地址必须是bls类型）",
+	ArgsUsage: "[矿工地址, 新worker地址]",
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "really-do-it",
-			Usage: "Actually send transaction performing the action",
+			Usage: "确认执行的命令",
 			Value: false,
 		},
 	},
@@ -654,11 +654,14 @@ var proposeChangeWorker = &cli.Command{
 			return fmt.Errorf("密码错误")
 		}
 		if !cctx.Args().Present() {
+			fmt.Println("新worker地址必须要输入.")
 			return fmt.Errorf("must pass address of new worker address")
 		}
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Println("连接FULLNODE_API_INFO失败")
+			return fmt.Errorf("must pass address of new worker address")
 			return err
 		}
 		defer acloser()
@@ -668,11 +671,13 @@ var proposeChangeWorker = &cli.Command{
 		// 目标地址
 		na, err := address.NewFromString(cctx.Args().Get(1))
 		if err != nil {
+			fmt.Println("获取新的worker地址失败")
 			return err
 		}
 
 		newAddr, err := api.StateLookupID(ctx, na, types.EmptyTSK)
 		if err != nil {
+			fmt.Println("从链上读取新worker地址失败")
 			return err
 		}
 
@@ -680,26 +685,30 @@ var proposeChangeWorker = &cli.Command{
 		//maddr, err := nodeApi.ActorAddress(ctx)
 		maddr, err := address.NewFromString(cctx.Args().First())
 		if err != nil {
+			fmt.Println("解析矿工地址失败")
 			return err
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println("从链上读取矿工地址失败")
 			return err
 		}
 
 		if mi.NewWorker.Empty() {
 			if mi.Worker == newAddr {
+				fmt.Printf("钱包地址已经设置为#{%s}\n", na)
 				return fmt.Errorf("worker address already set to %s", na)
 			}
 		} else {
 			if mi.NewWorker == newAddr {
+				fmt.Printf("新的钱包地址已经设置为#{%s}\n", na)
 				return fmt.Errorf("change to worker address %s already pending", na)
 			}
 		}
 
 		if !cctx.Bool("really-do-it") {
-			fmt.Fprintln(cctx.App.Writer, "Pass --really-do-it to actually execute this action")
+			fmt.Fprintln(cctx.App.Writer, "请输入 --really-do-it 参数执行命令")
 			return nil
 		}
 
@@ -710,6 +719,7 @@ var proposeChangeWorker = &cli.Command{
 
 		sp, err := actors.SerializeParams(cwp)
 		if err != nil {
+			fmt.Println("序列化消息参数失败")
 			return xerrors.Errorf("serializing params: %w", err)
 		}
 
@@ -765,6 +775,7 @@ var proposeChangeWorker = &cli.Command{
 		// wait for it to get mined into a block
 		wait, err := api.StateWaitMsg(ctx, cid, build.MessageConfidence)
 		if err != nil {
+			fmt.Println("等待消息返回失败")
 			return err
 		}
 
@@ -776,9 +787,11 @@ var proposeChangeWorker = &cli.Command{
 
 		mi, err = api.StateMinerInfo(ctx, maddr, wait.TipSet)
 		if err != nil {
+			fmt.Println("获取miner状态失败")
 			return err
 		}
 		if mi.NewWorker != newAddr {
+			fmt.Printf("Proposed worker address change not reflected on chain: expected '%s', found '%s'\n", na, mi.NewWorker)
 			return fmt.Errorf("Proposed worker address change not reflected on chain: expected '%s', found '%s'", na, mi.NewWorker)
 		}
 
