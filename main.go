@@ -15,12 +15,14 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/crypto"
+	"github.com/filecoin-project/lotus/api/v0api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
 	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
 	"github.com/howeyc/gopass"
+	"github.com/ipfs/go-cid"
 	"github.com/mitchellh/go-homedir"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/urfave/cli/v2"
@@ -30,6 +32,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var localdb *db.LocalDb = nil
@@ -231,20 +234,25 @@ func main() {
 		signCmd,
 		setOwnerCmd,
 		proposeChangeWorker,
-		//controlListCmd,
-		//controlSetCmd,
+		localdbCmd,
+		controlListCmd,
+		controlSetCmd,
+		toolsCmd,
+		walletBalance,
+		walletSendBatchCmd,
 	}
 
 	app := &cli.App{
-		Name:    "萤火虫钱包管理工具",
-		Usage:   "萤火虫钱包管理工具， 用于矿工提现，转账，签名，以及节点控制等功能",
-		Version: build.UserVersion(),
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:  "db-dir",
-				Value: "./data",
-			},
-		},
+		Name:      "萤火虫钱包管理工具",
+		Usage:     "萤火虫钱包管理工具， 用于矿工提现，转账，签名，以及节点控制等功能",
+		UsageText: "通过环境变量 LOTUS_WALLET_TOOL_PATH 设置程序执行路径, 默认路径: ~/.lotuswallettool。 与链交互需要配置 FULLNODE_API_INFO 环境变量",
+		Version:   build.UserVersion(),
+		//Flags: []cli.Flag{
+		//	&cli.StringFlag{
+		//		Name:  "db-dir",
+		//		Value: "./data",
+		//	},
+		//},
 		Commands: local,
 	}
 
@@ -346,6 +354,7 @@ var exportAddressCmd = &cli.Command{
 		return nil
 	},
 }
+
 var sendCmd = &cli.Command{
 	Name:  "send",
 	Usage: "转账",
@@ -457,7 +466,7 @@ var sendCmd = &cli.Command{
 			return err
 		}
 
-		fmt.Printf("Requested rewards withdrawal in message %s\n", cid.String())
+		fmt.Printf("转账消息id： %s\n", cid.String())
 
 		return nil
 	},
@@ -541,14 +550,14 @@ var initCmd = &cli.Command{
 		}
 
 		// 初始化创建一个钱包地址,用于后续验证密码使用
-		createAddress(false, false)
+		createAddress(false, false, "", "")
 		return nil
 	},
 }
 
 var newAddressCmd = &cli.Command{
 	Name:  "new-address",
-	Usage: "创建一个新的钱包地址",
+	Usage: "创建一个新的钱包地址,默认创建spec256类型的钱包地址",
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
 			Name:  "bls",
@@ -560,6 +569,16 @@ var newAddressCmd = &cli.Command{
 			Usage:  "显示私钥",
 			Value:  false,
 			Hidden: true,
+		},
+		&cli.StringFlag{
+			Name:  "miner-id",
+			Usage: "所属miner",
+			Value: "",
+		},
+		&cli.StringFlag{
+			Name:  "type",
+			Usage: "指定钱包地址类型，owner，post，worker，此参数必须再指定miner-id的前提下才有效",
+			Value: "",
 		},
 	},
 	Before: func(context *cli.Context) error {
@@ -574,8 +593,24 @@ var newAddressCmd = &cli.Command{
 			return fmt.Errorf("密码错误")
 		}
 
+		miner := context.String("miner-id")
+		if len(miner) > 0 && !strings.HasPrefix(miner, "f0") {
+			fmt.Printf("minerid(%s) 输入不合法,请输入一个有效的minerid\n", miner)
+			return fmt.Errorf("minerid(%s) 输入不合法,请输入一个有效的minerid\n", miner)
+		}
+
+		addrType := ""
+		if len(miner) > 0 {
+			addrType = context.String("type")
+			if strings.Compare(addrType, string(db.PostAddr)) == 0 || strings.Compare(addrType, string(db.OwnerAddr)) == 0 || strings.Compare(addrType, string(db.WorkerAddr)) == 0 {
+			} else {
+				fmt.Errorf("type(%s) 类型必须为owner、post、worker", addrType)
+				addrType = ""
+			}
+		}
+
 		showPK := context.Bool("show-private-key")
-		createAddress(showPK, context.Bool("bls"))
+		createAddress(showPK, context.Bool("bls"), miner, addrType)
 		return nil
 	},
 }
@@ -709,6 +744,327 @@ var importAddressCmd = &cli.Command{
 		}
 
 		fmt.Println("成功导入钱包：", key.Address.String())
+		return nil
+	},
+}
+
+var walletBalance = &cli.Command{
+	Name:      "balance",
+	Usage:     "Get account balance",
+	ArgsUsage: "[address]",
+	//Before: func(context *cli.Context) error {
+	//	if err := _init(); err != nil {
+	//		passwdValid = false
+	//	}
+	//	return nil
+	//},
+	Action: func(cctx *cli.Context) error {
+
+		//if !passwdValid {
+		//	fmt.Println("密码错误.")
+		//	return fmt.Errorf("密码错误")
+		//}
+		api, closer, err := lcli.GetFullNodeAPI(cctx)
+		if err != nil {
+			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
+			return err
+		}
+		defer closer()
+		ctx := lcli.ReqContext(cctx)
+
+		var addr address.Address
+		if cctx.Args().First() != "" {
+			addr, err = address.NewFromString(cctx.Args().First())
+		} else {
+			addr, err = api.WalletDefaultAddress(ctx)
+		}
+		if err != nil {
+			return err
+		}
+
+		balance, err := api.WalletBalance(ctx, addr)
+		if err != nil {
+			return err
+		}
+
+		if balance.Equals(types.NewInt(0)) {
+			fmt.Printf("%s (warning: may display 0 if chain sync in progress)\n", types.FIL(balance))
+		} else {
+			fmt.Printf("%s   %s\n", addr.String(), types.FIL(balance))
+		}
+
+		return nil
+	},
+}
+
+// 主网
+//var outAddrStr = "f1dnyrev6qjndjioanm3gmzkgavs2u5xxzvs5uwhq"
+//var inAddrStr = "f13anz7poviwzw765bvjyngvtnys3xm5pbhqe4jna"
+
+// 出账账户
+var outAddrStr = "f12ijdsnibjsvxhticyy3ybk64j3nde6beoc4gawq"
+
+// 总账户
+var inAddrStr = "f1y2y6srzoihm6dr4fahh27exrctc52l6r4xmuwqy"
+
+var walletSendBatchCmd = &cli.Command{
+	Name:      "send-batch",
+	Usage:     "send batch amount file",
+	ArgsUsage: "[batch-file]",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:   "from",
+			Usage:  "from",
+			Hidden: true,
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		//from := cctx.String("from")
+		//if from == "" {
+		//	from = outAddrStr
+		//	fmt.Printf("from address is empty, use default outAddr(%s)\n", outAddrStr)
+		//}
+
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
+		outAddr, err := address.NewFromString(outAddrStr)
+		if err != nil {
+			fmt.Println("outAddrStr invalid. ", outAddrStr)
+			return err
+		}
+
+		inAddr, err := address.NewFromString(inAddrStr)
+		if err != nil {
+			fmt.Println("inAddrStr address invalid.  ", inAddrStr)
+			return err
+		}
+
+		fromAddr := outAddr
+
+		batchSendFile := cctx.Args().First()
+		fmt.Println(batchSendFile)
+		if !strings.Contains(batchSendFile, "withdraw.list") {
+			fmt.Println("invalid batch file")
+			return nil
+		}
+
+		batchSendBytes, err := ioutil.ReadFile(batchSendFile)
+		if err != nil {
+			fmt.Printf("open and read file(%s) failed. err:%v\n", "./t", err)
+			return err
+		}
+
+		//fmt.Printf("%v\n",[]byte("\n"))
+		type Trans struct {
+			To     string
+			Amount string
+		}
+
+		var willTrans []Trans
+		var totalAmount float64
+		items := bytes.Split(batchSendBytes, []byte{10})
+		for count, item := range items {
+			//fmt.Println(item)
+			subItem := bytes.Split(item, []byte{9})
+			if len(subItem) == 2 {
+				trans := Trans{To: string(subItem[1]), Amount: string(subItem[0])}
+				willTrans = append(willTrans, trans)
+				fmt.Printf("%d ./firefly-wallet send --from %s --to %s --amount %s\n", count+1, fromAddr.String(), trans.To, trans.Amount)
+
+				amount, err := strconv.ParseFloat(trans.Amount, 64)
+				if err != nil {
+					fmt.Println("parse ", trans.Amount, " failed.")
+					return nil
+				}
+				totalAmount += amount
+			}
+		}
+
+		api, closer, err := lcli.GetFullNodeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+		ctx := lcli.ReqContext(cctx)
+
+		// 查询outAddr余额是否足够支付totalAmount+手续费，够则直接支付
+		// 不够，则查询inAddr余额是否足够支付totalAmount，如果够，则算出手续费，+totalAmount并转帐到outAddr中去，然后下发
+		// 不够，则退出提示归集资金
+		outAddrBalance, err := api.WalletBalance(ctx, outAddr)
+		if err != nil {
+			fmt.Println(outAddr, " get balance failed. err: ", err)
+			return err
+		}
+
+		fmt.Printf("\n出账账户 %s 余额： %s\n", outAddrStr, types.FIL(outAddrBalance).Short())
+		fmt.Printf("总共转账 %d 笔， 共计： %f FIL\n\n", len(willTrans), totalAmount)
+
+		// 转账手续费,按照每笔0.01fil计算
+		transFee := float64(len(willTrans)+1) * 0.01
+		outBalanceFloat, err := strconv.ParseFloat(types.FIL(outAddrBalance).Unitless(), 64)
+		if err != nil {
+			fmt.Println(outAddrBalance, " parse float. err: ", err)
+			return err
+		}
+
+		if outBalanceFloat-transFee < totalAmount {
+			// outAddr余额不足
+
+			inAddrBalance, err := api.WalletBalance(ctx, inAddr)
+			if err != nil {
+				fmt.Println(inAddr, " get balance failed. err: ", err)
+				return err
+			}
+
+			inBalanceFloat, err := strconv.ParseFloat(types.FIL(inAddrBalance).Unitless(), 64)
+			if err != nil {
+				fmt.Println(inAddrBalance, " parse float. err: ", err)
+				return err
+			}
+
+			fmt.Printf("总账户 %s 余额： %f\n", inAddrStr, inBalanceFloat)
+			fmt.Printf("出账账户 %s 余额： %f\n", outAddrStr, outBalanceFloat)
+
+			if inBalanceFloat+outBalanceFloat-transFee < totalAmount {
+				// 总账户+出账账户+需要手续费不足以提现，退出
+				fmt.Printf("inAddr(%f) + outAddr(%f) - transFee(%f) = %f 小于提现金额 %f。 请归集资金再来！\n", inBalanceFloat, outBalanceFloat, transFee, inBalanceFloat+outBalanceFloat-transFee, totalAmount)
+				return nil
+			}
+
+			// 总账户+出账账户足以支持提现，那么从总账户转入差额，再提现
+			fmt.Printf("提现总金额（提现金额+手续费）: %f ，从 总账户 转入 %f 到出账账户。\n", totalAmount+transFee, totalAmount+transFee-outBalanceFloat+0.02)
+			fmt.Printf("./firefly-wallet send --from %s %s %f\n", inAddr, outAddr, totalAmount+transFee-outBalanceFloat+0.02)
+
+			var sure string
+			fmt.Printf("请核对转账信息：Y/n : ")
+			_, err = fmt.Scanf("%s", &sure)
+			if err != nil {
+				fmt.Println("获取终端输入异常，err: ", err)
+				return nil
+			}
+			if sure != "Y" {
+				fmt.Println("取消转账")
+				return nil
+			}
+
+			var resure string
+			fmt.Printf("请核对转账信息：yes/n : ")
+			_, err = fmt.Scanf("%s", &resure)
+			if err != nil {
+				fmt.Println("获取终端输入异常，err: ", err)
+				return nil
+			}
+			if resure != "yes" {
+				fmt.Println("取消转账")
+				return nil
+			}
+
+			cid, err := send(cctx, api, inAddr, outAddr.String(), fmt.Sprintf("%f", totalAmount+transFee-outBalanceFloat+0.02), 0)
+			if err != nil {
+				fmt.Println("transfor err: \n", err)
+				return nil
+			}
+			fmt.Println(cid.String())
+			ticker := time.NewTicker(time.Minute * 3)
+			canTransFil := false
+			for {
+				select {
+				case <-time.After(time.Second * 5):
+					outAddrBalanceTmp, err := api.WalletBalance(ctx, outAddr)
+					if err != nil {
+						fmt.Println(outAddr, " get balance failed. err: ", err)
+						return err
+					}
+					outBalanceFloatTmp, err := strconv.ParseFloat(types.FIL(outAddrBalanceTmp).Unitless(), 64)
+					if err != nil {
+						fmt.Println(outAddrBalance, " parse float. err: ", err)
+						return err
+					}
+					if outBalanceFloatTmp-transFee >= totalAmount {
+						fmt.Printf("\n出账账户 %s 余额： %s 足以支付提现金额: %f \n", outAddrStr, types.FIL(outAddrBalanceTmp).Short(), totalAmount)
+						canTransFil = true
+						break
+					}
+
+				case <-ticker.C:
+					fmt.Printf("从总账户(%s) 转入 %f 到出账账户（%s） 超过2min还未到账，程序退出请手动确认转账是否成功  \n", inAddrStr, totalAmount+transFee-outBalanceFloat+0.02, outAddrStr)
+					return nil
+				}
+
+				if canTransFil {
+					break
+				}
+			}
+		}
+
+		var sure string
+		fmt.Printf("请核对转账信息：Y/n : ")
+		_, err = fmt.Scanf("%s", &sure)
+		if err != nil {
+			fmt.Println("获取终端输入异常，err: ", err)
+			return nil
+		}
+		if sure != "Y" {
+			fmt.Println("取消转账")
+			return nil
+		}
+
+		var resure string
+		fmt.Printf("请核对转账信息：yes/n : ")
+		_, err = fmt.Scanf("%s", &resure)
+		if err != nil {
+			fmt.Println("获取终端输入异常，err: ", err)
+			return nil
+		}
+		if resure != "yes" {
+			fmt.Println("取消转账")
+			return nil
+		}
+
+		a, err := api.StateGetActor(ctx, fromAddr, types.EmptyTSK)
+		if err != nil {
+			fmt.Printf("读取获取msg.From地址的nonce失败，err:%v\n", err)
+			return err
+		}
+
+		//删除提现文件数据
+		defer os.Remove(batchSendFile)
+		var successCount int
+		var successAmount float64
+		nonce := a.Nonce
+		for count, trans := range willTrans {
+			amount, err := strconv.ParseFloat(trans.Amount, 64)
+			if err != nil {
+				fmt.Println("parse ", trans.Amount, " failed.")
+				break
+			}
+			fmt.Printf("%d ./firefly-wallet send --from %s %s %s", count+1, fromAddr.String(), trans.To, trans.Amount)
+
+			cid, err := send(cctx, api, fromAddr, trans.To, trans.Amount, nonce)
+			if err != nil {
+				if strings.Compare("转入和转出地址相同", err.Error()) == 0 {
+					continue
+				}
+
+				fmt.Println("transfor err: \n", err)
+				break
+			}
+			fmt.Println(cid.String())
+			nonce++
+			successCount++
+			successAmount += amount
+		}
+
+		fmt.Printf("计划转 %d 笔， 共计 %f FIL\n实际完成 %d 笔，共计 %f FIL, 失败 %d 笔\n", len(willTrans), totalAmount, successCount, successAmount, len(willTrans)-successCount)
 		return nil
 	},
 }
@@ -887,13 +1243,13 @@ var signCmd = &cli.Command{
 	},
 }
 
-func createAddress(show, bls bool) {
+func createAddress(show, bls bool, miner, addrType string) {
 	if bls {
 		// t3...
-		generateBlsFilAddress(show)
+		generateBlsFilAddress(show, miner, addrType)
 	} else {
 		// t1....
-		generateFilAddress(show)
+		generateFilAddress(show, miner, addrType)
 	}
 }
 
@@ -915,7 +1271,7 @@ func getNextIndex() int {
 	return index
 }
 
-func generateBlsFilAddress(showPK bool) {
+func generateBlsFilAddress(showPK bool, miner, addrType string) {
 	index := getNextIndex()
 	filAddr, err := impl.CreateBlsFilAddress(string(localMnenoic), index)
 	if err != nil {
@@ -923,11 +1279,13 @@ func generateBlsFilAddress(showPK bool) {
 	}
 
 	fai := FilAddressInfo{
-		Address: filAddr,
-		Index:   index,
+		Address:  filAddr,
+		Index:    index,
+		MinerId:  miner,
+		AddrType: addrType,
 	}
 
-	//fmt.Println(fai)
+	fmt.Println(fai)
 
 	if showPK {
 		priKey, err := impl.ExportBlsAddress(string(localMnenoic), index)
@@ -938,7 +1296,7 @@ func generateBlsFilAddress(showPK bool) {
 	}
 
 	faiByte, err := json.Marshal(&fai)
-	fmt.Println(filAddr)
+	//fmt.Println(filAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -954,7 +1312,7 @@ func generateBlsFilAddress(showPK bool) {
 	}
 }
 
-func generateFilAddress(showPK bool) {
+func generateFilAddress(showPK bool, miner, addrType string) {
 	mnenoic := string(localMnenoic)
 	index := getNextIndex()
 	filAddr, err := impl.CreateSecp256k1FilAddress(mnenoic, index)
@@ -963,11 +1321,14 @@ func generateFilAddress(showPK bool) {
 	}
 
 	fai := FilAddressInfo{
-		Address: filAddr,
-		Index:   index,
+		Address:  filAddr,
+		Index:    index,
+		MinerId:  miner,
+		AddrType: addrType,
 	}
 
-	fmt.Println(filAddr)
+	//fmt.Println(filAddr)
+	fmt.Println(fai)
 
 	if showPK {
 		priKey, err := impl.ExportSecp256k1Address(mnenoic, index)
@@ -1044,4 +1405,60 @@ func keyExist(localdb *db.LocalDb) bool {
 	//}
 
 	return true
+}
+
+func send(cctx *cli.Context, api v0api.FullNode, from address.Address, to, amount string, nonce uint64) (cid.Cid, error) {
+	ctx := lcli.ReqContext(cctx)
+	msg := &types.Message{}
+	var err error
+	msg.To, err = address.NewFromString(to)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to parse target address: %w", err)
+	}
+
+	val, err := types.ParseFIL(amount)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("failed to parse amount: %w", err)
+	}
+	msg.Value = abi.TokenAmount(val)
+
+	msg.From = from
+
+	if strings.Compare(msg.From.String(), msg.To.String()) == 0 {
+		return cid.Cid{}, fmt.Errorf("转入和转出地址相同")
+	}
+
+	if nonce != 0 {
+		msg.Nonce = nonce
+	} else {
+		// 获取nonce
+		a, err := api.StateGetActor(ctx, msg.From, types.EmptyTSK)
+		if err != nil {
+			fmt.Printf("读取获取msg.From地址的nonce失败，err:%v\n", err)
+			return cid.Cid{}, err
+		}
+		msg.Nonce = a.Nonce
+	}
+
+	//msgCid, err := srv.Send(ctx, params)
+	msg, err = api.GasEstimateMessageGas(ctx, msg, nil, types.EmptyTSK)
+	if err != nil {
+		fmt.Printf("评估消息的gas费用失败， err:%v\n", err)
+		return cid.Cid{}, xerrors.Errorf("GasEstimateMessageGas error: %w", err)
+	}
+
+	// 签名
+	signMsg, err := signMessage(msg.Cid().Bytes(), msg.From)
+	if err != nil {
+		return cid.Cid{}, err
+	}
+
+	// 推送消息
+
+	ccid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *signMsg})
+	if err != nil {
+		fmt.Printf("推送消息上链失败，err:%v\n", err)
+		return cid.Cid{}, err
+	}
+	return ccid, nil
 }

@@ -177,6 +177,7 @@ var controlSetCmd = &cli.Command{
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer acloser()
@@ -186,11 +187,13 @@ var controlSetCmd = &cli.Command{
 		//maddr, err := nodeApi.ActorAddress(ctx)
 		maddr, err := address.NewFromString(cctx.Args().First())
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -199,6 +202,7 @@ var controlSetCmd = &cli.Command{
 		for _, controlAddress := range mi.ControlAddresses {
 			ka, err := api.StateAccountKey(ctx, controlAddress, types.EmptyTSK)
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 
@@ -211,17 +215,20 @@ var controlSetCmd = &cli.Command{
 		for i, as := range cctx.Args().Tail() {
 			a, err := address.NewFromString(as)
 			if err != nil {
+				fmt.Println(err)
 				return xerrors.Errorf("parsing address %d: %w", i, err)
 			}
 
 			ka, err := api.StateAccountKey(ctx, a, types.EmptyTSK)
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 
 			// make sure the address exists on chain
 			_, err = api.StateLookupID(ctx, ka, types.EmptyTSK)
 			if err != nil {
+				fmt.Println(err)
 				return xerrors.Errorf("looking up %s: %w", ka, err)
 			}
 
@@ -250,6 +257,7 @@ var controlSetCmd = &cli.Command{
 
 		sp, err := actors.SerializeParams(cwp)
 		if err != nil {
+			fmt.Println(err)
 			return xerrors.Errorf("serializing params: %w", err)
 		}
 
@@ -477,18 +485,18 @@ var controlListCmd = &cli.Command{
 			Value: true,
 		},
 	},
-	Before: func(context *cli.Context) error {
-		if err := _init(); err != nil {
-			passwdValid = false
-		}
-		return nil
-	},
+	//Before: func(context *cli.Context) error {
+	//	if err := _init(); err != nil {
+	//		passwdValid = false
+	//	}
+	//	return nil
+	//},
 	Action: func(cctx *cli.Context) error {
 		color.NoColor = !cctx.Bool("color")
-		if !passwdValid {
-			fmt.Println("密码错误.")
-			return fmt.Errorf("密码错误")
-		}
+		//if !passwdValid {
+		//	fmt.Println("密码错误.")
+		//	return fmt.Errorf("密码错误")
+		//}
 		//nodeApi, closer, err := GetStorageMinerAPI(cctx)
 		//if err != nil {
 		//	return err
@@ -497,6 +505,7 @@ var controlListCmd = &cli.Command{
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer acloser()
@@ -506,11 +515,20 @@ var controlListCmd = &cli.Command{
 		//maddr, err := nodeApi.ActorAddress(ctx)
 		maddr, err := address.NewFromString(cctx.Args().First())
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+
+		// 获取矿工可用余额
+		available, err := api.StateMinerAvailableBalance(ctx, maddr, types.EmptyTSK)
+		if err != nil {
+			fmt.Printf("读取矿工(%s)余额失败。 %v\n", cctx.Args().First(), err)
 			return err
 		}
 
@@ -580,9 +598,9 @@ var controlListCmd = &cli.Command{
 			}
 
 			kstr := k.String()
-			if !cctx.Bool("verbose") {
-				kstr = kstr[:9] + "..."
-			}
+			//if !cctx.Bool("verbose") {
+			//	kstr = kstr[:9] + "..."
+			//}
 
 			bstr := types.FIL(b).String()
 			switch {
@@ -626,6 +644,13 @@ var controlListCmd = &cli.Command{
 		for i, ca := range mi.ControlAddresses {
 			printKey(fmt.Sprintf("control-%d", i), ca)
 		}
+		tw.Write(map[string]interface{}{
+			"name":    "miner",
+			"ID":      maddr.String(),
+			"key":     "",
+			"use":     "available",
+			"balance": color.HiGreenString(types.FIL(available).String()),
+		})
 
 		return tw.Flush(os.Stdout)
 	},

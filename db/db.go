@@ -46,6 +46,14 @@ const (
 	KeyPriKey KeyType = "filPriKey"
 )
 
+type AddrType string
+
+const (
+	WorkerAddr AddrType = "worker"
+	PostAddr   AddrType = "post"
+	OwnerAddr  AddrType = "owner"
+)
+
 func (lb *LocalDb) getKey(keyType KeyType, key string) string {
 	return fmt.Sprintf("%s-%s", keyType, key)
 }
