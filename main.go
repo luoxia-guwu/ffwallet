@@ -240,6 +240,8 @@ func main() {
 		toolsCmd,
 		walletBalance,
 		walletSendBatchCmd,
+		batchGenerateKeyCmd,
+		msigCmd,
 	}
 
 	app := &cli.App{
@@ -779,11 +781,13 @@ var walletBalance = &cli.Command{
 			addr, err = api.WalletDefaultAddress(ctx)
 		}
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		balance, err := api.WalletBalance(ctx, addr)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -802,10 +806,16 @@ var walletBalance = &cli.Command{
 //var inAddrStr = "f13anz7poviwzw765bvjyngvtnys3xm5pbhqe4jna"
 
 // 出账账户
-var outAddrStr = "f12ijdsnibjsvxhticyy3ybk64j3nde6beoc4gawq"
+//var outAddrStr = "f12ijdsnibjsvxhticyy3ybk64j3nde6beoc4gawq"
+//
+//// 总账户
+//var inAddrStr = "f1y2y6srzoihm6dr4fahh27exrctc52l6r4xmuwqy"
+
+// 出账账户
+var outAddrStr = "f1jfx7m2qigjdf7urjapadrzbkakkpn53tobp34hq"
 
 // 总账户
-var inAddrStr = "f1y2y6srzoihm6dr4fahh27exrctc52l6r4xmuwqy"
+var inAddrStr = "f1tqj3wdoxlrspmoyqdkaokq25wleilq347enpbtq"
 
 var walletSendBatchCmd = &cli.Command{
 	Name:      "send-batch",
@@ -1243,14 +1253,91 @@ var signCmd = &cli.Command{
 	},
 }
 
-func createAddress(show, bls bool, miner, addrType string) {
+var batchGenerateKeyCmd = &cli.Command{
+	Name:  "batch-gen-key",
+	Usage: "批量创建钱包地址,并将私钥写入./tmpfile.txt",
+	Flags: []cli.Flag{
+		&cli.BoolFlag{
+			Name:  "show-private-key",
+			Value: false,
+			Usage: "show private key",
+		},
+		&cli.BoolFlag{
+			Name:  "bls",
+			Usage: "bls address",
+			Value: false,
+		},
+		&cli.IntFlag{
+			Name:  "num",
+			Usage: "number of want create",
+			Value: 1,
+		},
+		&cli.BoolFlag{
+			Name:  "save-private-key",
+			Usage: "指定这个命令则写私钥到./tmpfile.txt文件中，否则不写入",
+			Value: false,
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(context *cli.Context) error {
+
+		num := context.Int("num")
+		if num <= 0 {
+			fmt.Printf("num(%d) must > 0\n", num)
+			return nil
+		}
+
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
+		showPK := context.Bool("show-private-key")
+
+		f, err := os.OpenFile("./tmpfile.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+		if err != nil {
+			fmt.Println(err.Error())
+			return nil
+		}
+
+		defer func(f *os.File) {
+			err = f.Close()
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+		}(f)
+
+		for i := 0; i < num; i++ {
+			fmt.Printf("%d ------------>>>>>>>>>>>>\n", i)
+			priKey := createAddress(showPK, context.Bool("bls"), "", "")
+
+			if context.Bool("save-private-key") {
+				_, err = f.WriteString(fmt.Sprintf("%s\n", priKey))
+				if err != nil {
+					fmt.Println(err.Error())
+					return nil
+				}
+			}
+		}
+		return nil
+	},
+}
+
+func createAddress(show, bls bool, miner, addrType string) string {
+	priKey := ""
 	if bls {
 		// t3...
-		generateBlsFilAddress(show, miner, addrType)
+		priKey = generateBlsFilAddress(show, miner, addrType)
 	} else {
 		// t1....
-		generateFilAddress(show, miner, addrType)
+		priKey = generateFilAddress(show, miner, addrType)
 	}
+	return priKey
 }
 
 func getNextIndex() int {
@@ -1271,7 +1358,7 @@ func getNextIndex() int {
 	return index
 }
 
-func generateBlsFilAddress(showPK bool, miner, addrType string) {
+func generateBlsFilAddress(showPK bool, miner, addrType string) string {
 	index := getNextIndex()
 	filAddr, err := impl.CreateBlsFilAddress(string(localMnenoic), index)
 	if err != nil {
@@ -1287,11 +1374,12 @@ func generateBlsFilAddress(showPK bool, miner, addrType string) {
 
 	fmt.Println(fai)
 
+	priKey, err := impl.ExportBlsAddress(string(localMnenoic), index)
+	if err != nil {
+		panic(err)
+	}
+
 	if showPK {
-		priKey, err := impl.ExportBlsAddress(string(localMnenoic), index)
-		if err != nil {
-			panic(err)
-		}
 		fmt.Println(priKey)
 	}
 
@@ -1310,9 +1398,10 @@ func generateBlsFilAddress(showPK bool, miner, addrType string) {
 	if err != nil {
 		panic(err)
 	}
+	return priKey
 }
 
-func generateFilAddress(showPK bool, miner, addrType string) {
+func generateFilAddress(showPK bool, miner, addrType string) string {
 	mnenoic := string(localMnenoic)
 	index := getNextIndex()
 	filAddr, err := impl.CreateSecp256k1FilAddress(mnenoic, index)
@@ -1330,11 +1419,12 @@ func generateFilAddress(showPK bool, miner, addrType string) {
 	//fmt.Println(filAddr)
 	fmt.Println(fai)
 
+	priKey, err := impl.ExportSecp256k1Address(mnenoic, index)
+	if err != nil {
+		panic(err)
+	}
+
 	if showPK {
-		priKey, err := impl.ExportSecp256k1Address(mnenoic, index)
-		if err != nil {
-			panic(err)
-		}
 		fmt.Println(priKey)
 	}
 
@@ -1352,6 +1442,8 @@ func generateFilAddress(showPK bool, miner, addrType string) {
 	if err != nil {
 		panic(err)
 	}
+
+	return priKey
 }
 
 func getPassword() ([]byte, error) {

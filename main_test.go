@@ -12,7 +12,7 @@ import (
 
 func testinit() error {
 
-	os.Setenv(repoENV, "/home/bajie/work/ffwallet/.wtool/")
+	os.Setenv(repoENV, "/home/bajie/work/wallet/ffwallet/")
 	if err := _initDb(); err != nil {
 		fmt.Printf("初始化DB失败，err: %v\n", err)
 		return err
@@ -24,7 +24,7 @@ func testinit() error {
 		return err
 	}
 
-	p := ""
+	p := "@1"
 	localMnenoic, err = mnemonic.Decrypt(encryptText, []byte(p))
 	if err != nil {
 		fmt.Printf("读取助记词失败，err: %v\n", err)
@@ -49,6 +49,10 @@ func TestGenerateOwnerKeyBatch(t *testing.T) {
 	for _, miner := range miners {
 		createAddress(false, true, miner, string(db.OwnerAddr))
 	}
+}
+
+func TestBatchGenerateWorkAddr(t *testing.T) {
+
 }
 
 func TestListAllAddrs(t *testing.T) {
