@@ -239,10 +239,12 @@ var msigProposeCmd = &cli.Command{
 	},
 	Action: func(cctx *cli.Context) error {
 		if cctx.Args().Len() < 3 {
+			fmt.Printf("must pass at least multisig address, destination, and value")
 			return ShowHelp(cctx, fmt.Errorf("must pass at least multisig address, destination, and value"))
 		}
 
 		if cctx.Args().Len() > 3 && cctx.Args().Len() != 5 {
+			fmt.Printf("must either pass three or five arguments")
 			return ShowHelp(cctx, fmt.Errorf("must either pass three or five arguments"))
 		}
 		if !passwdValid {
@@ -251,6 +253,7 @@ var msigProposeCmd = &cli.Command{
 		}
 		srv, err := lcli.GetFullNodeServices(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer srv.Close() //nolint:errcheck
@@ -260,16 +263,19 @@ var msigProposeCmd = &cli.Command{
 
 		msig, err := address.NewFromString(cctx.Args().Get(0))
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		dest, err := address.NewFromString(cctx.Args().Get(1))
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		value, err := types.ParseFIL(cctx.Args().Get(2))
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -278,12 +284,14 @@ var msigProposeCmd = &cli.Command{
 		if cctx.Args().Len() == 5 {
 			m, err := strconv.ParseUint(cctx.Args().Get(3), 10, 64)
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			method = m
 
 			p, err := hex.DecodeString(cctx.Args().Get(4))
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			params = p
@@ -293,12 +301,14 @@ var msigProposeCmd = &cli.Command{
 		if cctx.IsSet("from") {
 			f, err := address.NewFromString(cctx.String("from"))
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			from = f
 		} else {
 			defaddr, err := api.WalletDefaultAddress(ctx)
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			from = defaddr
@@ -306,20 +316,24 @@ var msigProposeCmd = &cli.Command{
 
 		act, err := api.StateGetActor(ctx, msig, types.EmptyTSK)
 		if err != nil {
+			fmt.Printf("failed to look up multisig %s: %w", msig, err)
 			return fmt.Errorf("failed to look up multisig %s: %w", msig, err)
 		}
 
 		if !builtin.IsMultisigActor(act.Code) {
+			fmt.Printf("actor %s is not a multisig actor", msig)
 			return fmt.Errorf("actor %s is not a multisig actor", msig)
 		}
 
 		proto, err := api.MsigPropose(ctx, msig, dest, types.BigInt(value), from, method, params)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		msgCid, err := InteractiveSend(ctx, cctx, api, proto)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -327,15 +341,18 @@ var msigProposeCmd = &cli.Command{
 
 		wait, err := api.StateWaitMsg(ctx, msgCid, uint64(cctx.Int("confidence")), build.Finality, true)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		if wait.Receipt.ExitCode != 0 {
+			fmt.Printf("proposal returned exit %d", wait.Receipt.ExitCode)
 			return fmt.Errorf("proposal returned exit %d", wait.Receipt.ExitCode)
 		}
 
 		var retval msig2.ProposeReturn
 		if err := retval.UnmarshalCBOR(bytes.NewReader(wait.Receipt.Return)); err != nil {
+			fmt.Printf("failed to unmarshal propose return value: %w", err)
 			return fmt.Errorf("failed to unmarshal propose return value: %w", err)
 		}
 
