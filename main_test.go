@@ -6,6 +6,7 @@ import (
 	"github.com/filecoin-project/firefly-wallet/db"
 	"github.com/filecoin-project/firefly-wallet/impl"
 	"github.com/filecoin-project/firefly-wallet/mnemonic"
+	"github.com/filecoin-project/lotus/chain/types"
 	"os"
 	"testing"
 )
@@ -109,4 +110,15 @@ func TestListAllAddrs(t *testing.T) {
 		}
 		fmt.Println("----------")
 	}
+}
+
+func TestFIL(t *testing.T) {
+	fil:=types.FIL{}
+	if fil.Int==nil{
+		fmt.Println("fil = nil")
+	}else{
+		fmt.Println("fil != nil")
+	}
+	fil.Short()
+
 }

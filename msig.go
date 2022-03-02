@@ -316,7 +316,7 @@ var msigProposeCmd = &cli.Command{
 
 		act, err := api.StateGetActor(ctx, msig, types.EmptyTSK)
 		if err != nil {
-			fmt.Printf("failed to look up multisig %s: %w", msig, err)
+			fmt.Printf("failed to look up multisig %s: %s", msig, err)
 			return fmt.Errorf("failed to look up multisig %s: %w", msig, err)
 		}
 
@@ -352,7 +352,7 @@ var msigProposeCmd = &cli.Command{
 
 		var retval msig2.ProposeReturn
 		if err := retval.UnmarshalCBOR(bytes.NewReader(wait.Receipt.Return)); err != nil {
-			fmt.Printf("failed to unmarshal propose return value: %w", err)
+			fmt.Printf("failed to unmarshal propose return value: %s", err)
 			return fmt.Errorf("failed to unmarshal propose return value: %w", err)
 		}
 
@@ -776,7 +776,7 @@ var msigProposeChangeWorkerCmd = &cli.Command{
 
 		act, err := api.StateGetActor(ctx, mi.Owner, types.EmptyTSK)
 		if err != nil {
-			fmt.Printf("failed to look up multisig %s: %w", mi.Owner, err)
+			fmt.Printf("failed to look up multisig %s: %s", mi.Owner, err)
 			return fmt.Errorf("failed to look up multisig %s: %w", mi.Owner, err)
 		}
 
