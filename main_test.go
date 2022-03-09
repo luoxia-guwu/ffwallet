@@ -6,6 +6,7 @@ import (
 	"github.com/filecoin-project/firefly-wallet/db"
 	"github.com/filecoin-project/firefly-wallet/impl"
 	"github.com/filecoin-project/firefly-wallet/mnemonic"
+	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/lotus/chain/types"
 	"os"
 	"testing"
@@ -121,4 +122,8 @@ func TestFIL(t *testing.T) {
 	}
 	fil.Short()
 
+}
+
+func TestSize(t *testing.T) {
+	fmt.Println(sectorsCountToGTP(136613,abi.RegisteredSealProof_StackedDrg32GiBV1))
 }

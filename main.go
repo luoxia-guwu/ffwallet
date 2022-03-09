@@ -20,7 +20,6 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
 	"github.com/howeyc/gopass"
 	"github.com/ipfs/go-cid"
 	"github.com/mitchellh/go-homedir"
@@ -242,6 +241,7 @@ func main() {
 		walletSendBatchCmd,
 		batchGenerateKeyCmd,
 		msigCmd,
+		sectorsCmd,
 	}
 
 	app := &cli.App{
@@ -428,7 +428,7 @@ var sendCmd = &cli.Command{
 			return fmt.Errorf("转入和转出地址相同")
 		}
 
-		msg.Method = builtin.MethodSend
+		msg.Method = 0
 
 		// 获取nonce
 		msg.Nonce, err = api.MpoolGetNonce(ctx, msg.From)

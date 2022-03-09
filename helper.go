@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/lotus/api/v0api"
+	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/hako/durafmt"
 	"github.com/ipfs/go-cid"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	ufcli "github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
@@ -151,4 +154,58 @@ func ParseTipSetRef(ctx context.Context, api v0api.FullNode, tss string) (*types
 	}
 
 	return ts, nil
+}
+
+
+func EpochTime(curr, e abi.ChainEpoch) string {
+	switch {
+	case curr > e:
+		return fmt.Sprintf("%d (%s ago)", e, durafmt.Parse(time.Second*time.Duration(int64(build.BlockDelaySecs)*int64(curr-e))).LimitFirstN(2))
+	case curr == e:
+		return fmt.Sprintf("%d (now)", e)
+	case curr < e:
+		return fmt.Sprintf("%d (in %s)", e, durafmt.Parse(time.Second*time.Duration(int64(build.BlockDelaySecs)*int64(e-curr))).LimitFirstN(2))
+	}
+
+	panic("math broke")
+}
+
+func EpochTimeHuman(curr, e abi.ChainEpoch) string {
+	switch {
+	case curr > e:
+		return time.Now().Add(durafmt.Parse(time.Second * time.Duration(int64(build.BlockDelaySecs)*int64(e-curr))).Duration()).Format("2006-01-02 15:04")
+		//return fmt.Sprintf("%d (%s ago)", e, durafmt.Parse(time.Second*time.Duration(int64(build.BlockDelaySecs)*int64(curr-e))).LimitFirstN(2))
+	case curr == e:
+		return fmt.Sprintf("%d (now)", e)
+	case curr < e:
+		return time.Now().Add(durafmt.Parse(time.Second * time.Duration(int64(build.BlockDelaySecs)*int64(e-curr))).Duration()).Format("2006-01-02 15:04")
+		//return fmt.Sprintf("%d (in %s)", e, durafmt.Parse(time.Second*time.Duration(int64(build.BlockDelaySecs)*int64(e-curr))).LimitFirstN(2))
+	}
+
+	panic("math broke")
+}
+
+// 将sector数量转换成算力单位是GTP
+
+func sectorsCountToGTP(sectorsCount uint64,pt abi.RegisteredSealProof) string {
+
+	sectorSizeUint:=int64(32)
+	if pt==abi.RegisteredSealProof_StackedDrg64GiBV1||pt==abi.RegisteredSealProof_StackedDrg64GiBV1_1{
+		sectorSizeUint=64
+	}
+
+	power:= float64(sectorSizeUint * int64(sectorsCount))
+	if power/1024.0<1{
+		return fmt.Sprintf("%.2f G",power)
+	}
+
+	if power/1024.0/1024.0<1{
+		return fmt.Sprintf("%.2f T",power/1024.0)
+	}
+
+	if power/1024.0/1024.0/1024.0<1{
+		return fmt.Sprintf("%.2f P",power/1024.0/1024.0)
+	}
+
+	return ""
 }
