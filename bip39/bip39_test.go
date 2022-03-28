@@ -18,7 +18,7 @@ func TestName(t *testing.T) {
 	//publicKey := masterKey.PublicKey()
 
 	// Display mnemonic and keys
-	err := ioutil.WriteFile("/home/bajie/work/wallet/chuyuconnect/k.txt", []byte(mnemonic), 0655)
+	err := ioutil.WriteFile("./k.txt", []byte(mnemonic), 0655)
 	if err != nil {
 		return
 	}
@@ -29,8 +29,8 @@ func TestName(t *testing.T) {
 }
 
 func TestWirteFile(t *testing.T) {
-	k256 := "vivid say whip one amused firm reject mushroom result current ball quit"
-	err := ioutil.WriteFile("/home/bajie/work/wallet/ffwallet-firefly-collect-old/k.txt", []byte(k256), 0655)
+	k256 := ""
+	err := ioutil.WriteFile("./k1.txt", []byte(k256), 0655)
 	if err != nil {
 		return
 	}

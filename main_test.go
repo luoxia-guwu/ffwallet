@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/filecoin-project/firefly-wallet/db"
@@ -8,7 +9,9 @@ import (
 	"github.com/filecoin-project/firefly-wallet/mnemonic"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/lotus/chain/types"
+	"io/ioutil"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -126,4 +129,44 @@ func TestFIL(t *testing.T) {
 
 func TestSize(t *testing.T) {
 	fmt.Println(sectorsCountToGTP(136613,abi.RegisteredSealProof_StackedDrg32GiBV1))
+}
+
+func TestStringsTrim(t *testing.T)  {
+	ss:="96,[172 205 246 19 66 15 107 178 107 105 118 41 195 118 114 21 177 13 193 249 199 22 41 153 233 245 107 87 171 164 30 61 119 67 96 150 86 28 14 214 60 161 146 171 214 110 35 200 146 215 18 8 5 83 81 100 88 134 76 38 197 3 64 221 151 34 100 215 245 127 117 45 203 171 28 208 213 196 27 35 0 39 151 0 247 12 47 72 13 56 116 147 0 99 73 33 17 15 104 181 12 154 2 100 145 162 158 76 25 229 30 231 50 9 216 218 8 122 225 71 158 144 110 154 194 255 179 134 86 148 125 217 234 240 52 120 146 45 219 231 225 80 141 97 185 188 173 180 230 93 124 200 246 166 109 204 95 180 57 84 189 120 110 196 242 167 176 14 163 1 167 190 224 179 204 174 136 10 186 102 254 188 170 76 58 76 38 192 42 104 57 205];"
+
+	fmt.Println(strings.Trim(ss,"[]"))
+}
+
+// 将存储的文件转换成export的字节流
+func TestConvertFILAddr(t *testing.T) {
+
+	keyPath:="./t"
+	file, err := os.Open(keyPath)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close() //nolint: errcheck // read only op
+
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	var res types.KeyInfo
+	err = json.Unmarshal(data, &res)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	bytes, err := json.Marshal(res)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	encoded := hex.EncodeToString(bytes)
+	fmt.Println(encoded)
 }
