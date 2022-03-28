@@ -2,3 +2,4 @@
 *.txt
 go.sum
 firefly-wallet
+./bip39/
