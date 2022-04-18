@@ -30,9 +30,16 @@ func TestName(t *testing.T) {
 
 func TestWirteFile(t *testing.T) {
 
+
 	k256 := ""
 	err := ioutil.WriteFile("./k1.txt", []byte(k256), 0655)
 	if err != nil {
 		return
 	}
+}
+
+func TestBitAnd(t *testing.T) {
+	a:=2
+	b:=6
+	fmt.Println(a&b)
 }

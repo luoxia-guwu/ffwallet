@@ -399,6 +399,7 @@ var msigInspectCmd = &cli.Command{
 
 		api, closer, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer closer()
@@ -408,30 +409,36 @@ var msigInspectCmd = &cli.Command{
 
 		maddr, err := address.NewFromString(cctx.Args().First())
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		head, err := api.ChainHead(ctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		act, err := api.StateGetActor(ctx, maddr, head.Key())
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		ownId, err := api.StateLookupID(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		mstate, err := multisig.Load(store, act)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		locked, err := mstate.LockedBalance(head.Height())
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -441,16 +448,19 @@ var msigInspectCmd = &cli.Command{
 		if cctx.Bool("vesting") {
 			ib, err := mstate.InitialBalance()
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			fmt.Fprintf(cctx.App.Writer, "InitialBalance: %s\n", types.FIL(ib))
 			se, err := mstate.StartEpoch()
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			fmt.Fprintf(cctx.App.Writer, "StartEpoch: %d\n", se)
 			ud, err := mstate.UnlockDuration()
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			fmt.Fprintf(cctx.App.Writer, "UnlockDuration: %d\n", ud)
@@ -458,10 +468,12 @@ var msigInspectCmd = &cli.Command{
 
 		signers, err := mstate.Signers()
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		threshold, err := mstate.Threshold()
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		fmt.Fprintf(cctx.App.Writer, "Threshold: %d / %d\n", threshold, len(signers))
@@ -486,6 +498,7 @@ var msigInspectCmd = &cli.Command{
 			pending[id] = txn
 			return nil
 		}); err != nil {
+			fmt.Println(err)
 			return xerrors.Errorf("reading pending transactions: %w", err)
 		}
 
