@@ -15,7 +15,8 @@ import (
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/builtin"
-	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
+	//"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
+	mbuildin "github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	"github.com/filecoin-project/lotus/chain/types"
@@ -649,7 +650,7 @@ var msigProposeChangeOwnerCmd = &cli.Command{
 			return fmt.Errorf("actor %s is not a multisig actor", msig)
 		}
 
-		proto, err := api.MsigPropose(ctx, msig, maddr, big.Zero(), from, uint64(miner.Methods.ChangeOwnerAddress), sp)
+		proto, err := api.MsigPropose(ctx, msig, maddr, big.Zero(), from, uint64(mbuildin.MethodsMiner.ChangeOwnerAddress), sp)
 		if err != nil {
 			return err
 		}
@@ -798,7 +799,7 @@ var msigProposeChangeWorkerCmd = &cli.Command{
 			return fmt.Errorf("actor %s is not a multisig actor", mi.Owner)
 		}
 
-		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(miner.Methods.ChangeWorkerAddress), sp)
+		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(mbuildin.MethodsMiner.ChangeWorkerAddress), sp)
 		if err != nil {
 			fmt.Println(err)
 			return err
@@ -946,7 +947,7 @@ var msigProposeControlSetCmd = &cli.Command{
 			return fmt.Errorf("actor %s is not a multisig actor", mi.Owner)
 		}
 
-		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(miner.Methods.ChangeWorkerAddress), sp)
+		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(mbuildin.MethodsMiner.ChangeWorkerAddress), sp)
 		if err != nil {
 			return err
 		}
@@ -1048,7 +1049,7 @@ var msigProposeWithdrawCmd = &cli.Command{
 			return fmt.Errorf("actor %s is not a multisig actor", mi.Owner)
 		}
 
-		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(miner.Methods.WithdrawBalance), params)
+		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(mbuildin.MethodsMiner.WithdrawBalance), params)
 		if err != nil {
 			return err
 		}

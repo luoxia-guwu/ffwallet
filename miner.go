@@ -6,9 +6,9 @@ import (
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
-	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
@@ -110,7 +110,7 @@ var withdrawCmd = &cli.Command{
 			To:     maddr,
 			From:   owner,
 			Value:  types.NewInt(0),
-			Method: miner.Methods.WithdrawBalance,
+			Method: builtin.MethodsMiner.WithdrawBalance,
 			Nonce:  a.Nonce,
 			Params: params,
 		}, nil, types.EmptyTSK)
@@ -278,7 +278,7 @@ var controlSetCmd = &cli.Command{
 			To:     maddr,
 			From:   owner,
 			Value:  big.Zero(),
-			Method: miner.Methods.ChangeWorkerAddress,
+			Method: builtin.MethodsMiner.ChangeWorkerAddress,
 			Nonce:  a.Nonce,
 			Params: sp,
 		}, nil, types.EmptyTSK)
@@ -419,7 +419,7 @@ var setOwnerCmd = &cli.Command{
 		msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
 			From:   fa,
 			To:     maddr,
-			Method: miner.Methods.ChangeOwnerAddress,
+			Method: builtin.MethodsMiner.ChangeOwnerAddress,
 			Value:  big.Zero(),
 			Params: sp,
 			Nonce:  a.Nonce,
@@ -764,7 +764,7 @@ var proposeChangeWorker = &cli.Command{
 		msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
 			From:   realOwner,
 			To:     maddr,
-			Method: miner.Methods.ChangeWorkerAddress,
+			Method: builtin.MethodsMiner.ChangeWorkerAddress,
 			Value:  big.Zero(),
 			Params: sp,
 			Nonce:  a.Nonce,

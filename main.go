@@ -242,6 +242,7 @@ func main() {
 		batchGenerateKeyCmd,
 		msigCmd,
 		sectorsCmd,
+		filplusCmd,
 	}
 
 	app := &cli.App{

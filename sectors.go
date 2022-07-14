@@ -6,6 +6,7 @@ import (
 	"github.com/filecoin-project/go-bitfield"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	mbuildin "github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/actors/policy"
@@ -300,7 +301,7 @@ var sectorsExtendCmd = &cli.Command{
 			smsg, err := api.MpoolPushMessage(ctx, &types.Message{
 				From:   mi.Worker,
 				To:     maddr,
-				Method: miner.Methods.ExtendSectorExpiration,
+				Method: mbuildin.MethodsMiner.ExtendSectorExpiration,
 
 				Value:  big.Zero(),
 				Params: sp,
