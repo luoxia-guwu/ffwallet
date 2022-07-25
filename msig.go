@@ -985,6 +985,7 @@ var msigProposeWithdrawCmd = &cli.Command{
 		}
 		srv, err := lcli.GetFullNodeServices(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer srv.Close() //nolint:errcheck
@@ -994,11 +995,13 @@ var msigProposeWithdrawCmd = &cli.Command{
 
 		maddr, err := address.NewFromString(cctx.Args().Get(0))
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		available, err := api.StateMinerAvailableBalance(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -1006,17 +1009,20 @@ var msigProposeWithdrawCmd = &cli.Command{
 
 		f, err := types.ParseFIL(cctx.Args().Get(1))
 		if err != nil {
+			fmt.Println(err)
 			return xerrors.Errorf("parsing 'amount' argument: %w", err)
 		}
 
 		amount = abi.TokenAmount(f)
 
 		if amount.GreaterThan(available) {
+			fmt.Println(xerrors.Errorf("can't withdraw more funds than available; requested: %s; available: %s", amount, available))
 			return xerrors.Errorf("can't withdraw more funds than available; requested: %s; available: %s", amount, available)
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -1024,12 +1030,14 @@ var msigProposeWithdrawCmd = &cli.Command{
 		if cctx.IsSet("from") {
 			f, err := address.NewFromString(cctx.String("from"))
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			from = f
 		} else {
 			defaddr, err := api.WalletDefaultAddress(ctx)
 			if err != nil {
+				fmt.Println(err)
 				return err
 			}
 			from = defaddr
@@ -1038,24 +1046,29 @@ var msigProposeWithdrawCmd = &cli.Command{
 			AmountRequested: amount, // Default to attempting to withdraw all the extra funds in the miner actor
 		})
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		act, err := api.StateGetActor(ctx, mi.Owner, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return fmt.Errorf("failed to look up multisig %s: %w", mi.Owner, err)
 		}
 
 		if !builtin.IsMultisigActor(act.Code) {
+			fmt.Println(fmt.Errorf("actor %s is not a multisig actor", mi.Owner))
 			return fmt.Errorf("actor %s is not a multisig actor", mi.Owner)
 		}
 
 		proto, err := api.MsigPropose(ctx, mi.Owner, maddr, big.Zero(), from, uint64(mbuildin.MethodsMiner.WithdrawBalance), params)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		msgCid, err := InteractiveSend(ctx, cctx, api, proto)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -1063,10 +1076,12 @@ var msigProposeWithdrawCmd = &cli.Command{
 
 		wait, err := api.StateWaitMsg(ctx, msgCid, uint64(cctx.Int("confidence")), build.Finality, true)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		if wait.Receipt.ExitCode != 0 {
+			fmt.Println(fmt.Errorf("proposal returned exit %d", wait.Receipt.ExitCode))
 			return fmt.Errorf("proposal returned exit %d", wait.Receipt.ExitCode)
 		}
 
