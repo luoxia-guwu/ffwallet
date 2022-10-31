@@ -233,6 +233,7 @@ func main() {
 		signCmd,
 		setOwnerCmd,
 		proposeChangeWorker,
+		confirmChangeWorker,
 		localdbCmd,
 		controlListCmd,
 		controlSetCmd,

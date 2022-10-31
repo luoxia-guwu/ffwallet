@@ -678,8 +678,8 @@ var proposeChangeWorker = &cli.Command{
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
-		if !cctx.Args().Present() {
-			fmt.Println("新worker地址必须要输入.")
+		if cctx.Args().Len()!=2 {
+			fmt.Println("miner地址和新worker地址必须要输入.")
 			return fmt.Errorf("must pass address of new worker address")
 		}
 
@@ -770,7 +770,7 @@ var proposeChangeWorker = &cli.Command{
 			Nonce:  a.Nonce,
 		}, nil, types.EmptyTSK)
 		if err != nil {
-			return xerrors.Errorf("mpool push: %w", err)
+			return xerrors.Errorf("GasEstimateMessageGas: %w", err)
 		}
 
 		fmt.Printf("\n%+v\n", msg)
@@ -822,6 +822,160 @@ var proposeChangeWorker = &cli.Command{
 
 		fmt.Fprintf(cctx.App.Writer, "Worker key change to %s successfully proposed.\n", na)
 		fmt.Fprintf(cctx.App.Writer, "Call 'confirm-change-worker' at or after height %d to complete.\n", mi.WorkerChangeEpoch)
+
+		return nil
+	},
+}
+
+var confirmChangeWorker = &cli.Command{
+	Name:      "confirm-change-worker",
+	Usage:     "Confirm a worker address change",
+	ArgsUsage: "[旷工地址 newaddress]",
+	Flags: []cli.Flag{
+		&cli.BoolFlag{
+			Name:  "really-do-it",
+			Usage: "Actually send transaction performing the action",
+			Value: false,
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+		if cctx.Args().Len()!=2 {
+			fmt.Println("miner地址和新worker地址必须要输入.")
+			return fmt.Errorf("must pass address of new worker address")
+		}
+
+		api, acloser, err := lcli.GetFullNodeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer acloser()
+
+		ctx := lcli.ReqContext(cctx)
+
+		na, err := address.NewFromString(cctx.Args().Get(1))
+		if err != nil {
+			return err
+		}
+
+		// 矿工地址
+		//maddr, err := nodeApi.ActorAddress(ctx)
+		maddr, err := address.NewFromString(cctx.Args().First())
+		if err != nil {
+			fmt.Println("解析矿工地址失败")
+			return err
+		}
+
+		newAddr, err := api.StateLookupID(ctx, na, types.EmptyTSK)
+		if err != nil {
+			return err
+		}
+
+		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
+		if err != nil {
+			return err
+		}
+
+		if mi.NewWorker.Empty() {
+			return xerrors.Errorf("no worker key change proposed")
+		} else if mi.NewWorker != newAddr {
+			return xerrors.Errorf("worker key %s does not match current worker key proposal %s", newAddr, mi.NewWorker)
+		}
+
+		if head, err := api.ChainHead(ctx); err != nil {
+			return xerrors.Errorf("failed to get the chain head: %w", err)
+		} else if head.Height() < mi.WorkerChangeEpoch {
+			return xerrors.Errorf("worker key change cannot be confirmed until %d, current height is %d", mi.WorkerChangeEpoch, head.Height())
+		}
+
+		if !cctx.Bool("really-do-it") {
+			fmt.Fprintln(cctx.App.Writer, "Pass --really-do-it to actually execute this action")
+			return nil
+		}
+
+		realOwner, err := api.StateAccountKey(ctx, mi.Owner, types.EmptyTSK)
+		if err != nil {
+			fmt.Printf("%s\t%s: error getting account key: %s\n", maddr, mi.Owner, err)
+			return nil
+		}
+
+		// 获取nonce
+		a, err := api.StateGetActor(ctx, mi.Owner, types.EmptyTSK)
+		if err != nil {
+			fmt.Printf("读取获取owner地址的nonce失败，err:%v\n", err)
+			return err
+		}
+
+		// 构造msg
+		msg,err:=api.GasEstimateMessageGas(ctx,&types.Message{
+			From:   realOwner,
+			To:     maddr,
+			Method: builtin.MethodsMiner.ConfirmUpdateWorkerKey,
+			Value:  big.Zero(),
+			Nonce: a.Nonce,
+		},nil,types.EmptyTSK)
+
+		if err != nil {
+			fmt.Println(xerrors.Errorf("GasEstimateMessageGas: %w", err))
+			return xerrors.Errorf("GasEstimateMessageGas: %w", err)
+		}
+
+		fmt.Printf("\n%+v\n", msg)
+
+		mb, err := msg.ToStorageBlock()
+		if err != nil {
+			fmt.Printf("序列化消息失败， err:%v", err)
+			return xerrors.Errorf("serializing message: %w", err)
+		}
+
+		// 签名
+		sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+		if err != nil {
+			fmt.Printf("签名失败， err:%v\n", err)
+			return xerrors.Errorf("签名失败: %w", err)
+		}
+
+		// 推送消息
+		cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
+		if err != nil {
+			fmt.Printf("推送消息上链失败，err:%v\n", err)
+			return err
+		}
+
+		fmt.Fprintln(cctx.App.Writer, "Propose Message CID:", cid)
+
+
+		// wait for it to get mined into a block
+		wait, err := api.StateWaitMsg(ctx, cid, build.MessageConfidence)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+
+		// check it executed successfully
+		if wait.Receipt.ExitCode != 0 {
+			fmt.Fprintln(cctx.App.Writer, "Worker change failed!")
+			return err
+		}
+
+		mi, err = api.StateMinerInfo(ctx, maddr, wait.TipSet)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+		if mi.Worker != newAddr {
+			fmt.Printf("Confirmed worker address change not reflected on chain: expected '%s', found '%s'", newAddr, mi.Worker)
+			return fmt.Errorf("Confirmed worker address change not reflected on chain: expected '%s', found '%s'", newAddr, mi.Worker)
+		}
 
 		return nil
 	},

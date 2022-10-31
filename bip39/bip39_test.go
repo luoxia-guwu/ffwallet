@@ -31,7 +31,7 @@ func TestName(t *testing.T) {
 func TestWirteFile(t *testing.T) {
 
 
-	k256 := ""
+	k256 := "lens "
 	err := ioutil.WriteFile("./k1.txt", []byte(k256), 0655)
 	if err != nil {
 		return
