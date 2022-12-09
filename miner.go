@@ -856,6 +856,7 @@ var confirmChangeWorker = &cli.Command{
 
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 		defer acloser()
@@ -864,6 +865,7 @@ var confirmChangeWorker = &cli.Command{
 
 		na, err := address.NewFromString(cctx.Args().Get(1))
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
@@ -877,23 +879,28 @@ var confirmChangeWorker = &cli.Command{
 
 		newAddr, err := api.StateLookupID(ctx, na, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
 		if mi.NewWorker.Empty() {
+			fmt.Println(xerrors.Errorf("no worker key change proposed"))
 			return xerrors.Errorf("no worker key change proposed")
 		} else if mi.NewWorker != newAddr {
+			fmt.Println(xerrors.Errorf("worker key %s does not match current worker key proposal %s", newAddr, mi.NewWorker))
 			return xerrors.Errorf("worker key %s does not match current worker key proposal %s", newAddr, mi.NewWorker)
 		}
 
 		if head, err := api.ChainHead(ctx); err != nil {
 			return xerrors.Errorf("failed to get the chain head: %w", err)
 		} else if head.Height() < mi.WorkerChangeEpoch {
+			fmt.Println(xerrors.Errorf("worker key change cannot be confirmed until %d, current height is %d", mi.WorkerChangeEpoch, head.Height()))
 			return xerrors.Errorf("worker key change cannot be confirmed until %d, current height is %d", mi.WorkerChangeEpoch, head.Height())
 		}
 

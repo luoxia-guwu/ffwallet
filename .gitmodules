@@ -1,3 +1,5 @@
 [submodule "extern/filecoin-ffi"]
 	path = extern/filecoin-ffi
 	url = https://github.com/filecoin-project/filecoin-ffi.git
+[submodule "extern/filecoin-ffi/"]
+	branch = v12.0.0
