@@ -19,6 +19,7 @@ import (
 	"golang.org/x/xerrors"
 
 	verifregtypes "github.com/filecoin-project/go-state-types/builtin/v8/verifreg"
+ 	verifregtypes9 "github.com/filecoin-project/go-state-types/builtin/v9/verifreg"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 )
 import lcli "github.com/filecoin-project/lotus/cli"
@@ -406,8 +407,8 @@ var filplusSignRemoveDataCapProposal = &cli.Command{
 			}
 		}
 
-		params := verifregtypes.RemoveDataCapProposal{
-			RemovalProposalID: verifregtypes.RmDcProposalID{ProposalID: id},
+		params := verifregtypes9.RemoveDataCapProposal{
+			RemovalProposalID: verifregtypes9.RmDcProposalID{ProposalID: id},
 			DataCapAmount:     allowanceToRemove,
 			VerifiedClient:    clientIdAddr,
 		}
