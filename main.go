@@ -244,6 +244,7 @@ func main() {
 		msigCmd,
 		sectorsCmd,
 		filplusCmd,
+		commCmd,
 	}
 
 	app := &cli.App{

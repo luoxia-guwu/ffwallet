@@ -7,59 +7,61 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil/hdkeychain"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/tyler-smith/go-bip39"
 )
 
 //var TronBytePrefix = byte(0x41)
 
-//func createAccount(mnemonic string, pathStr string) (accounts.Account, error) {
-//	//var account accounts.Account
-//	path := parseDerivePath(pathStr)
-//	masterKey, err := newFromMnemonic(mnemonic)
-//	if err != nil {
-//		return accounts.Account{}, err
-//	}
-//	return derive(masterKey, path)
-//}
+func createAccount(mnemonic string, pathStr string) (accounts.Account, error) {
+	//var account accounts.Account
+	path := parseDerivePath(pathStr)
+	masterKey, err := newFromMnemonic(mnemonic)
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	return derive(masterKey, path)
+}
 
-//func derive(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (accounts.Account, error) {
-//	address, err := deriveAddr(key, path)
-//	if err != nil {
-//		return accounts.Account{}, err
-//	}
-//	account := accounts.Account{
-//		Address: address,
-//		URL: accounts.URL{
-//			Scheme: "",
-//			Path:   path.String(),
-//		},
-//	}
-//	return account, nil
-//}
+func derive(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (accounts.Account, error) {
+	address, err := deriveAddr(key, path)
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	account := accounts.Account{
+		Address: address,
+		URL: accounts.URL{
+			Scheme: "",
+			Path:   path.String(),
+		},
+	}
+	return account, nil
+}
 
-//func deriveAddr(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (common.Address, error) {
-//	pubkey, err := derivePubkey(key, path)
-//	if err != nil {
-//		return common.Address{}, err
-//	}
-//	address := crypto.PubkeyToAddress(*pubkey)
-//	return address, nil
-//}
+func deriveAddr(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (common.Address, error) {
+	pubkey, err := derivePubkey(key, path)
+	if err != nil {
+		return common.Address{}, err
+	}
+	address := crypto.PubkeyToAddress(*pubkey)
+	return address, nil
+}
 
-//func derivePubkey(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (*ecdsa.PublicKey, error) {
-//	priKey, err := derivePrikey(key, path)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	publicKey := priKey.Public()
-//	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
-//	if !ok {
-//		return nil, errors.New("failed to get public key")
-//	}
-//
-//	return publicKeyECDSA, nil
-//}
+func derivePubkey(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (*ecdsa.PublicKey, error) {
+	priKey, err := derivePrikey(key, path)
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey := priKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("failed to get public key")
+	}
+
+	return publicKeyECDSA, nil
+}
 
 func derivePrikey(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (*ecdsa.PrivateKey, error) {
 	var err error

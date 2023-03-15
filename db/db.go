@@ -44,6 +44,8 @@ const (
 	KeyIndex  KeyType = "filIndex"
 	KeyCommon KeyType = "commonKey"
 	KeyPriKey KeyType = "filPriKey"
+
+	USDTKeyIndex KeyType = "usdtIndex"
 )
 
 type AddrType string
