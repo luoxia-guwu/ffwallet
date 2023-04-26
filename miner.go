@@ -926,7 +926,7 @@ var confirmChangeWorker = &cli.Command{
 		msg,err:=api.GasEstimateMessageGas(ctx,&types.Message{
 			From:   realOwner,
 			To:     maddr,
-			Method: builtin.MethodsMiner.ConfirmUpdateWorkerKey,
+			Method: builtin.MethodsMiner.ConfirmChangeWorkerAddress,
 			Value:  big.Zero(),
 			Nonce: a.Nonce,
 		},nil,types.EmptyTSK)

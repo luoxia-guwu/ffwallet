@@ -11,8 +11,8 @@ require (
 	github.com/filecoin-project/go-address v1.1.0
 	github.com/filecoin-project/go-bitfield v0.2.4
 	github.com/filecoin-project/go-fil-markets v1.25.2
-	github.com/filecoin-project/go-state-types v0.10.0
-	github.com/filecoin-project/lotus v1.20.0
+	github.com/filecoin-project/go-state-types v0.11.1
+	github.com/filecoin-project/lotus v1.22.1
 	github.com/filecoin-project/specs-actors/v2 v2.3.6
 	github.com/filecoin-project/specs-actors/v5 v5.0.6
 	github.com/filecoin-project/specs-actors/v6 v6.0.2
@@ -29,7 +29,7 @@ require (
 	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/urfave/cli/v2 v2.16.3
 	github.com/whyrusleeping/cbor-gen v0.0.0-20221021053955-c138aae13722
-	golang.org/x/crypto v0.0.0-20220829220503-c86fa9a7ed90
+	golang.org/x/crypto v0.1.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2
 )
 

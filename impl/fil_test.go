@@ -60,3 +60,16 @@ func TestBlsSign(t *testing.T) {
 //	require.NoError(t, err)
 //}
 //
+
+func TestGenrateSpec256(t *testing.T)  {
+	
+	//mn := "tooth close faith twenty budget fame cheap island  canal make item"
+
+	// pk, err := ExportSecp256k1Address(mn, 0)
+	pk, err := CreateSecp256k1FilAddress(mn, 0)
+	if err != nil {
+		fmt.Printf("private key get err:%+v", err)
+		return
+	}
+	fmt.Println("----",pk)
+}
