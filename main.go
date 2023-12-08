@@ -6,6 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
 	crypto2 "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	"github.com/filecoin-project/firefly-wallet/db"
@@ -26,12 +33,6 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
-	"io/ioutil"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var localdb *db.LocalDb = nil
@@ -245,6 +246,7 @@ func main() {
 		sectorsCmd,
 		filplusCmd,
 		commCmd,
+		mpoolCmd,
 	}
 
 	app := &cli.App{

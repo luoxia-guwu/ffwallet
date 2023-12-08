@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
@@ -15,7 +16,14 @@ import (
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/builtin"
+
 	//"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+
 	mbuildin "github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/multisig"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
@@ -30,11 +38,6 @@ import (
 	"github.com/urfave/cli/v2"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
-	"reflect"
-	"sort"
-	"strconv"
-	"strings"
-	"text/tabwriter"
 )
 
 type MessagePrototype struct {
@@ -72,6 +75,7 @@ var msigCmd = &cli.Command{
 		msigCreateCmd,
 		msigInspectCmd,
 		msigProposeCmd,
+		msigCancelCmd,
 		msigProposeChangeOwnerCmd,
 		msigProposeChangeWorkerCmd,
 		msigProposeControlSetCmd,
@@ -362,6 +366,137 @@ var msigProposeCmd = &cli.Command{
 			fmt.Printf("Transaction was executed during propose\n")
 			fmt.Printf("Exit Code: %d\n", retval.Code)
 			fmt.Printf("Return Value: %x\n", retval.Ret)
+		}
+
+		return nil
+	},
+}
+
+var msigCancelCmd = &cli.Command{
+	Name:      "cancel",
+	Usage:     "Cancel a multisig message",
+	ArgsUsage: "<multisigAddress messageId> [destination value [methodId methodParams]]",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "from",
+			Usage: "account to send the cancel message from",
+		},
+	},
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Action: func(cctx *cli.Context) error {
+		if cctx.NArg() < 2 {
+			return ShowHelp(cctx, fmt.Errorf("must pass at least multisig address and message ID"))
+		}
+
+		if cctx.NArg() > 2 && cctx.NArg() < 4 {
+			return ShowHelp(cctx, fmt.Errorf("usage: msig cancel <msig addr> <message ID> <desination> <value>"))
+		}
+
+		if cctx.NArg() > 4 && cctx.NArg() != 6 {
+			return ShowHelp(cctx, fmt.Errorf("usage: msig cancel <msig addr> <message ID> <desination> <value> [ <method> <params> ]"))
+		}
+
+		srv, err := lcli.GetFullNodeServices(cctx)
+		if err != nil {
+			return err
+		}
+		defer srv.Close() //nolint:errcheck
+
+		api := srv.FullNodeAPI()
+		ctx := lcli.ReqContext(cctx)
+
+		msig, err := address.NewFromString(cctx.Args().Get(0))
+		if err != nil {
+			return err
+		}
+
+		txid, err := strconv.ParseUint(cctx.Args().Get(1), 10, 64)
+		if err != nil {
+			return err
+		}
+
+		var from address.Address
+		if cctx.IsSet("from") {
+			f, err := address.NewFromString(cctx.String("from"))
+			if err != nil {
+				return err
+			}
+			from = f
+		} else {
+			defaddr, err := api.WalletDefaultAddress(ctx)
+			if err != nil {
+				return err
+			}
+			from = defaddr
+		}
+
+		var msgCid cid.Cid
+		if cctx.NArg() == 2 {
+			proto, err := api.MsigCancel(ctx, msig, txid, from)
+			if err != nil {
+				return err
+			}
+
+			sm, err := InteractiveSend(ctx, cctx, api, proto)
+			if err != nil {
+				return err
+			}
+
+			msgCid = sm
+		} else {
+			dest, err := address.NewFromString(cctx.Args().Get(2))
+			if err != nil {
+				return err
+			}
+
+			value, err := types.ParseFIL(cctx.Args().Get(3))
+			if err != nil {
+				return err
+			}
+
+			var method uint64
+			var params []byte
+			if cctx.NArg() == 6 {
+				m, err := strconv.ParseUint(cctx.Args().Get(4), 10, 64)
+				if err != nil {
+					return err
+				}
+				method = m
+
+				p, err := hex.DecodeString(cctx.Args().Get(5))
+				if err != nil {
+					return err
+				}
+				params = p
+			}
+
+			proto, err := api.MsigCancelTxnHash(ctx, msig, txid, dest, types.BigInt(value), from, method, params)
+			if err != nil {
+				return err
+			}
+
+			sm, err := InteractiveSend(ctx, cctx, api, proto)
+			if err != nil {
+				return err
+			}
+
+			msgCid = sm
+		}
+
+		fmt.Println("sent cancel in message: ", msgCid)
+
+		wait, err := api.StateWaitMsg(ctx, msgCid, uint64(cctx.Int("confidence")), build.Finality, true)
+		if err != nil {
+			return err
+		}
+
+		if wait.Receipt.ExitCode.IsError() {
+			return fmt.Errorf("cancel returned exit %d", wait.Receipt.ExitCode)
 		}
 
 		return nil
@@ -749,7 +884,7 @@ var msigProposeChangeWorkerCmd = &cli.Command{
 		}
 
 		if mi.NewWorker.Empty() {
-			if mi.Worker == newAddr{
+			if mi.Worker == newAddr {
 				fmt.Println("worker address already set to ", worker)
 				return fmt.Errorf("worker address already set to %s", worker)
 			}
