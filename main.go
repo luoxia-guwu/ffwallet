@@ -253,7 +253,8 @@ func main() {
 		Name:      "萤火虫钱包管理工具",
 		Usage:     "萤火虫钱包管理工具， 用于矿工提现，转账，签名，以及节点控制等功能",
 		UsageText: "通过环境变量 LOTUS_WALLET_TOOL_PATH 设置程序执行路径, 默认路径: ~/.lotuswallettool。 与链交互需要配置 FULLNODE_API_INFO 环境变量",
-		Version:   build.UserVersion(),
+		// Version:   build.UserVersion(),
+		Version: string(build.NodeUserVersion()),
 		//Flags: []cli.Flag{
 		//	&cli.StringFlag{
 		//		Name:  "db-dir",
