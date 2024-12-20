@@ -2,21 +2,26 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/builtin"
+	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
+	"github.com/filecoin-project/lotus/chain/actors/adt"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
 	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
-	"os"
-	"strings"
 )
 
 var withdrawCmd = &cli.Command{
@@ -525,6 +530,18 @@ var controlListCmd = &cli.Command{
 			return err
 		}
 
+		mact, err := api.StateGetActor(ctx, maddr, types.EmptyTSK)
+		if err != nil {
+			return err
+		}
+
+		tbs := blockstore.NewTieredBstore(blockstore.NewAPIBlockstore(api), blockstore.NewMemory())
+
+		mas, err := miner.Load(adt.WrapStore(ctx, cbor.NewCborStore(tbs)), mact)
+		if err != nil {
+			return err
+		}
+
 		// 获取矿工可用余额
 		available, err := api.StateMinerAvailableBalance(ctx, maddr, types.EmptyTSK)
 		if err != nil {
@@ -553,36 +570,6 @@ var controlListCmd = &cli.Command{
 		for _, ca := range mi.ControlAddresses {
 			post[ca] = struct{}{}
 		}
-
-		//for _, ca := range ac.PreCommitControl {
-		//	ca, err := api.StateLookupID(ctx, ca, types.EmptyTSK)
-		//	if err != nil {
-		//		return err
-		//	}
-
-		//	delete(post, ca)
-		//	precommit[ca] = struct{}{}
-		//}
-
-		//for _, ca := range ac.CommitControl {
-		//	ca, err := api.StateLookupID(ctx, ca, types.EmptyTSK)
-		//	if err != nil {
-		//		return err
-		//	}
-
-		//	delete(post, ca)
-		//	commit[ca] = struct{}{}
-		//}
-
-		//for _, ca := range ac.TerminateControl {
-		//	ca, err := api.StateLookupID(ctx, ca, types.EmptyTSK)
-		//	if err != nil {
-		//		return err
-		//	}
-
-		//	delete(post, ca)
-		//	terminate[ca] = struct{}{}
-		//}
 
 		printKey := func(name string, a address.Address) {
 			b, err := api.WalletBalance(ctx, a)
@@ -649,7 +636,28 @@ var controlListCmd = &cli.Command{
 			"ID":      maddr.String(),
 			"key":     "",
 			"use":     "available",
-			"balance": color.HiGreenString(types.FIL(available).String()),
+			"balance": color.HiGreenString(types.FIL(available).Short()),
+		})
+
+		lockedFunds, err := mas.LockedFunds()
+		if err != nil {
+			return xerrors.Errorf("getting locked funds: %w", err)
+		}
+
+		tw.Write(map[string]interface{}{
+			"name":    "miner pledge",
+			"ID":      maddr.String(),
+			"key":     "",
+			"use":     "init pledge",
+			"balance": color.HiGreenString(types.FIL(lockedFunds.InitialPledgeRequirement).Short()),
+		})
+
+		tw.Write(map[string]interface{}{
+			"name":    "miner vesting",
+			"ID":      maddr.String(),
+			"key":     "",
+			"use":     "vesting",
+			"balance": color.HiGreenString(types.FIL(lockedFunds.VestingFunds).Short()),
 		})
 
 		return tw.Flush(os.Stdout)
@@ -678,7 +686,7 @@ var proposeChangeWorker = &cli.Command{
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
-		if cctx.Args().Len()!=2 {
+		if cctx.Args().Len() != 2 {
 			fmt.Println("miner地址和新worker地址必须要输入.")
 			return fmt.Errorf("must pass address of new worker address")
 		}
@@ -849,7 +857,7 @@ var confirmChangeWorker = &cli.Command{
 			fmt.Println("密码错误.")
 			return fmt.Errorf("密码错误")
 		}
-		if cctx.Args().Len()!=2 {
+		if cctx.Args().Len() != 2 {
 			fmt.Println("miner地址和新worker地址必须要输入.")
 			return fmt.Errorf("must pass address of new worker address")
 		}
@@ -923,13 +931,13 @@ var confirmChangeWorker = &cli.Command{
 		}
 
 		// 构造msg
-		msg,err:=api.GasEstimateMessageGas(ctx,&types.Message{
+		msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
 			From:   realOwner,
 			To:     maddr,
 			Method: builtin.MethodsMiner.ConfirmChangeWorkerAddress,
 			Value:  big.Zero(),
-			Nonce: a.Nonce,
-		},nil,types.EmptyTSK)
+			Nonce:  a.Nonce,
+		}, nil, types.EmptyTSK)
 
 		if err != nil {
 			fmt.Println(xerrors.Errorf("GasEstimateMessageGas: %w", err))
@@ -959,7 +967,6 @@ var confirmChangeWorker = &cli.Command{
 		}
 
 		fmt.Fprintln(cctx.App.Writer, "Propose Message CID:", cid)
-
 
 		// wait for it to get mined into a block
 		wait, err := api.StateWaitMsg(ctx, cid, build.MessageConfidence)

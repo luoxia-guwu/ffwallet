@@ -2,14 +2,20 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/lotus/blockstore"
+	"github.com/filecoin-project/lotus/chain/actors/adt"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/urfave/cli/v2"
-	"os"
-	"strings"
+	"golang.org/x/xerrors"
 )
 
 // 用来保存一些常用的命令工具
@@ -55,7 +61,6 @@ var countAvailableFil = &cli.Command{
 			tablewriter.Col("balance"),
 		)
 
-
 		printKey := func(name string, a address.Address) {
 			b, err := api.WalletBalance(ctx, a)
 			if err != nil {
@@ -84,14 +89,28 @@ var countAvailableFil = &cli.Command{
 				"name":    name,
 				"ID":      a,
 				"key":     kstr,
-				"use":     "",
+				"use":     "-",
 				"balance": bstr,
 			})
 		}
 
-		dododo:= func(maddr address.Address,total *types.BigInt) {
+		dododo := func(maddr address.Address, totalAvailable, totalAll *types.BigInt) {
 
 			mi, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			mact, err := api.StateGetActor(ctx, maddr, types.EmptyTSK)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			tbs := blockstore.NewTieredBstore(blockstore.NewAPIBlockstore(api), blockstore.NewMemory())
+
+			mas, err := miner.Load(adt.WrapStore(ctx, cbor.NewCborStore(tbs)), mact)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -104,34 +123,77 @@ var countAvailableFil = &cli.Command{
 				return
 			}
 
+			// totalAll 统计所有金额，包括质押和锁仓
+			// totalAvailable只统计节点可用和owner金额
+			if totalAll.NilOrZero() {
+				*totalAll = available
+			} else {
+				*totalAll = types.BigAdd(*totalAll, available)
+			}
+
 			printKey("owner", mi.Owner)
 			printKey("worker", mi.Worker)
-			if !mi.NewWorker.Empty(){
+			if !mi.NewWorker.Empty() {
 				printKey("newWorker", mi.NewWorker)
 			}
 			for i, ca := range mi.ControlAddresses {
+				c, _ := api.WalletBalance(ctx, ca)
+				*totalAll = types.BigAdd(*totalAll, c)
 				printKey(fmt.Sprintf("control-%d", i), ca)
 			}
 
 			tw.Write(map[string]interface{}{
 				"name":    "miner",
 				"ID":      maddr.String(),
-				"key":     "",
+				"key":     "-",
 				"use":     "available",
 				"balance": color.HiGreenString(types.FIL(available).String()),
 			})
-			tw.Write(map[string]interface{}{"key":"--------------------------------------------------"})
-			b, err := api.WalletBalance(ctx, mi.Owner)
-			if total.NilOrZero(){
-				*total=available
-			}else{
-				*total=types.BigAdd(*total,available)
+
+			lockedFunds, err := mas.LockedFunds()
+			if err != nil {
+				fmt.Println(xerrors.Errorf("getting locked funds: %w", err))
+				return
 			}
-			*total=types.BigAdd(*total,b)
+
+			tw.Write(map[string]interface{}{
+				"name":    "miner-pledge",
+				"ID":      maddr.String(),
+				"key":     "-",
+				"use":     "init-pledge",
+				"balance": color.HiGreenString(types.FIL(lockedFunds.InitialPledgeRequirement).Short()),
+			})
+
+			tw.Write(map[string]interface{}{
+				"name":    "miner-vesting",
+				"ID":      maddr.String(),
+				"key":     "-",
+				"use":     "vesting",
+				"balance": color.HiGreenString(types.FIL(lockedFunds.VestingFunds).Short()),
+			})
+
+			tw.Write(map[string]interface{}{"key": "--------------------------------------------------"})
+			b, _ := api.WalletBalance(ctx, mi.Owner)
+			if totalAvailable.NilOrZero() {
+				*totalAvailable = available
+			} else {
+				*totalAvailable = types.BigAdd(*totalAvailable, available)
+			}
+			*totalAvailable = types.BigAdd(*totalAvailable, b)
+
+			// 统计所以金额包括质押和线性释放金额
+			*totalAll = types.BigAdd(*totalAll, b)                                    // 加 owner余额
+			*totalAll = types.BigAdd(*totalAll, lockedFunds.InitialPledgeRequirement) // 加质押余额
+			*totalAll = types.BigAdd(*totalAll, lockedFunds.VestingFunds)             // 加锁仓余额
+
+			bWorker, _ := api.WalletBalance(ctx, mi.Worker)
+			*totalAll = types.BigAdd(*totalAll, bWorker) // 加worker
+
 		}
 
-		targAddrs:=cctx.Args().Slice()
-		totalAvailable:=types.BigInt{}
+		targAddrs := cctx.Args().Slice()
+		totalAvailable := types.BigInt{}
+		totalAll := types.BigInt{}
 		for _, addr := range targAddrs {
 			a, err := address.NewFromString(addr)
 			if err != nil {
@@ -139,20 +201,22 @@ var countAvailableFil = &cli.Command{
 				continue
 			}
 
-			if strings.HasPrefix(addr,"f0"){
-				dododo(a,&totalAvailable)
-			}else{
+			if strings.HasPrefix(addr, "f0") {
+				dododo(a, &totalAvailable, &totalAll)
+			} else {
 				b, err := api.WalletBalance(ctx, a)
-				if err!=nil{
+				if err != nil {
 					fmt.Println(err)
 					continue
 				}
-				totalAvailable=types.BigAdd(totalAvailable,b)
-				printKey("-",a)
+				totalAvailable = types.BigAdd(totalAvailable, b)
+				totalAll = types.BigAdd(totalAll, b)
+				printKey("-", a)
 			}
 		}
 		tw.Flush(os.Stdout)
-		fmt.Printf("总可用额:%s\n",types.FIL(totalAvailable).Short())
+		fmt.Printf("总可用额(owner+miner可提金额):%s\n", types.FIL(totalAvailable).Short())
+		fmt.Printf("总额(节点所有金额):%s\n", types.FIL(totalAll).Short())
 		return nil
 	},
 }
