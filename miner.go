@@ -1,25 +1,44 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+
+	"path/filepath"
 
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/builtin"
+	lapi "github.com/filecoin-project/lotus/api"
+	"github.com/filecoin-project/lotus/api/v1api"
 	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/build/buildconstants"
 	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/power"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/filecoin-project/lotus/lib/tablewriter"
+	"github.com/filecoin-project/lotus/node/repo"
+	"github.com/filecoin-project/lotus/storage/sealer/storiface"
 	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	power6 "github.com/filecoin-project/specs-actors/v6/actors/builtin/power"
+	"github.com/google/uuid"
+	"github.com/ipfs/go-datastore"
 	cbor "github.com/ipfs/go-ipld-cbor"
+	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
 )
@@ -59,6 +78,15 @@ var withdrawCmd = &cli.Command{
 		if err != nil {
 			fmt.Printf("输入miner ID(%s)不正确。 %v\n", cctx.Args().First(), err)
 			return err
+		}
+
+		//  版本判断
+		v, err := api.Version(ctx)
+		if err != nil {
+			return err
+		}
+		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion1) {
+			return xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion)
 		}
 
 		// 用于根据 矿工获取矿工owner账户
@@ -319,6 +347,7 @@ var controlSetCmd = &cli.Command{
 		return nil
 	},
 }
+
 var setOwnerCmd = &cli.Command{
 	Name:      "set-owner",
 	Usage:     "设置矿工的owner地址 (设置过程中这个命令需要被执行两次, 第一次用旧的ownr地址发送, 第二次用新的owner地址发送)",
@@ -438,7 +467,7 @@ var setOwnerCmd = &cli.Command{
 
 		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			fmt.Printf("序列化消息失败， err:%v", err)
+			fmt.Printf("序列化消息失败， err:%v\n", err)
 			return xerrors.Errorf("serializing message: %w", err)
 		}
 
@@ -695,7 +724,6 @@ var proposeChangeWorker = &cli.Command{
 		if err != nil {
 			fmt.Println("连接FULLNODE_API_INFO失败")
 			return fmt.Errorf("must pass address of new worker address")
-			return err
 		}
 		defer acloser()
 
@@ -785,7 +813,7 @@ var proposeChangeWorker = &cli.Command{
 
 		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			fmt.Printf("序列化消息失败， err:%v", err)
+			fmt.Printf("序列化消息失败， err:%v\n", err)
 			return xerrors.Errorf("serializing message: %w", err)
 		}
 
@@ -948,7 +976,7 @@ var confirmChangeWorker = &cli.Command{
 
 		mb, err := msg.ToStorageBlock()
 		if err != nil {
-			fmt.Printf("序列化消息失败， err:%v", err)
+			fmt.Printf("序列化消息失败， err:%v\n", err)
 			return xerrors.Errorf("serializing message: %w", err)
 		}
 
@@ -987,10 +1015,367 @@ var confirmChangeWorker = &cli.Command{
 			return err
 		}
 		if mi.Worker != newAddr {
-			fmt.Printf("Confirmed worker address change not reflected on chain: expected '%s', found '%s'", newAddr, mi.Worker)
+			fmt.Printf("Confirmed worker address change not reflected on chain: expected '%s', found '%s'\n", newAddr, mi.Worker)
 			return fmt.Errorf("Confirmed worker address change not reflected on chain: expected '%s', found '%s'", newAddr, mi.Worker)
 		}
 
 		return nil
 	},
+}
+
+const FlagMinerRepo = "./lotusstorage"
+
+var newMinerCmd = &cli.Command{
+	Name:  "newMiner",
+	Usage: "创建新的miner : newMiner --owner fxxx --worker f3xxxx",
+	//ArgsUsage: " --owner fxxxx",
+	Before: func(context *cli.Context) error {
+		if err := _init(); err != nil {
+			passwdValid = false
+		}
+		return nil
+	},
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:     "owner",
+			Aliases:  []string{"o"},
+			Usage:    "指定 owner  地址",
+			Required: true,
+		},
+		&cli.StringFlag{
+			Name:     "worker",
+			Aliases:  []string{"w"},
+			Usage:    "指定 worker  地址，必须是f3地址",
+			Required: true,
+		},
+	},
+	Action: func(cctx *cli.Context) error {
+
+		if !passwdValid {
+			fmt.Println("密码错误.")
+			return fmt.Errorf("密码错误")
+		}
+
+		api, closer, err := lcli.GetFullNodeAPIV1(cctx)
+		if err != nil {
+			fmt.Printf("连接FULLNODE_API_INFO api失败。%v\n", err)
+			return err
+		}
+		defer closer()
+
+		ctx := lcli.ReqContext(cctx)
+
+		// 默认指定扇区大小就是32GiB
+		ssize, err := abi.RegisteredSealProof_StackedDrg32GiBV1.SectorSize()
+		if err != nil {
+			return xerrors.Errorf("failed to calculate default sector size: %w", err)
+		}
+		fmt.Println("Checking if repo exists")
+
+		repoPath := FlagMinerRepo
+		r, err := repo.NewFS(repoPath)
+		if err != nil {
+			return err
+		}
+
+		ok, err := r.Exists()
+		if err != nil {
+			return err
+		}
+		if ok {
+			return xerrors.Errorf("repo at '%s' is already initialized", cctx.String(FlagMinerRepo))
+		}
+
+		fmt.Println("Checking full node version")
+
+		v, err := api.Version(ctx)
+		if err != nil {
+			return err
+		}
+		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion1) {
+			fmt.Println(xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion))
+			return xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion)
+		}
+
+		fmt.Println("Initializing repo .")
+
+		if err := r.Init(repo.StorageMiner); err != nil {
+			fmt.Println("r.Init err : ", err)
+			return err
+		}
+
+		{
+			lr, err := r.Lock(repo.StorageMiner)
+			if err != nil {
+				fmt.Println(err)
+				return err
+			}
+
+			var localPaths []storiface.LocalPath
+
+			if pssb := cctx.StringSlice("pre-sealed-sectors"); len(pssb) != 0 {
+				fmt.Printf("Setting up storage config with presealed sectors: %v\n", pssb)
+
+				for _, psp := range pssb {
+					psp, err := homedir.Expand(psp)
+					if err != nil {
+						fmt.Println(err)
+						return err
+					}
+					localPaths = append(localPaths, storiface.LocalPath{
+						Path: psp,
+					})
+				}
+			}
+
+			if !cctx.Bool("no-local-storage") {
+				b, err := json.MarshalIndent(&storiface.LocalStorageMeta{
+					ID:       storiface.ID(uuid.New().String()),
+					Weight:   10,
+					CanSeal:  true,
+					CanStore: true,
+				}, "", "  ")
+				if err != nil {
+					fmt.Println(err)
+					return xerrors.Errorf("marshaling storage config: %w", err)
+				}
+
+				if err := os.WriteFile(filepath.Join(lr.Path(), "sectorstore.json"), b, 0644); err != nil {
+					fmt.Println(err)
+					return xerrors.Errorf("persisting storage metadata (%s): %w", filepath.Join(lr.Path(), "sectorstore.json"), err)
+				}
+
+				localPaths = append(localPaths, storiface.LocalPath{
+					Path: lr.Path(),
+				})
+			}
+
+			if err := lr.SetStorage(func(sc *storiface.StorageConfig) {
+				sc.StoragePaths = append(sc.StoragePaths, localPaths...)
+			}); err != nil {
+				fmt.Println(err)
+				return xerrors.Errorf("set storage config: %w", err)
+			}
+
+			if err := lr.Close(); err != nil {
+				fmt.Println(err)
+				return err
+			}
+		}
+
+		gasPrice, _ := types.BigFromString("0")
+		confidence := buildconstants.MessageConfidence
+		if err := storageMinerInit(ctx, cctx, api, r, ssize, gasPrice, confidence); err != nil {
+			fmt.Println("Failed to initialize lotus-miner: ", err)
+			path, err := homedir.Expand(repoPath)
+			if err != nil {
+				fmt.Println(err)
+				return err
+			}
+			fmt.Printf("Cleaning up %s after attempt...\n", path)
+			if err := os.RemoveAll(path); err != nil {
+				fmt.Println("Failed to clean up failed storage repo: ", err)
+			}
+			fmt.Println(err)
+			return xerrors.Errorf("Storage-miner init failed")
+		}
+
+		// TODO: Point to setting storage price, maybe do it interactively or something
+		fmt.Println("Miner successfully created, you can now start it with 'lotus-miner run'")
+
+		return nil
+	},
+}
+
+func storageMinerInit(ctx context.Context, cctx *cli.Context, api v1api.FullNode, r repo.Repo, ssize abi.SectorSize, gasPrice types.BigInt, confidence uint64) error {
+	lr, err := r.Lock(repo.StorageMiner)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	defer lr.Close() //nolint:errcheck
+
+	fmt.Println("Initializing libp2p identity")
+
+	p2pSk, err := makeHostKey(lr)
+	if err != nil {
+		fmt.Println(err)
+		return xerrors.Errorf("make host key: %w", err)
+	}
+
+	peerid, err := peer.IDFromPrivateKey(p2pSk)
+	if err != nil {
+		fmt.Println(err)
+		return xerrors.Errorf("peer ID from private key: %w", err)
+	}
+
+	mds, err := lr.Datastore(ctx, "/metadata")
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	var addr address.Address
+	a, err := createStorageMiner(ctx, api, ssize, peerid, gasPrice, confidence, cctx)
+	if err != nil {
+		fmt.Println(err)
+		return xerrors.Errorf("creating miner failed: %w", err)
+	}
+
+	addr = a
+
+	fmt.Printf("Created new miner: %s\n", addr)
+	if err := mds.Put(ctx, datastore.NewKey("miner-address"), addr.Bytes()); err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	return nil
+}
+
+func makeHostKey(lr repo.LockedRepo) (crypto.PrivKey, error) {
+	pk, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	ks, err := lr.KeyStore()
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	kbytes, err := crypto.MarshalPrivateKey(pk)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	if err := ks.Put("libp2p-host", types.KeyInfo{
+		Type:       "libp2p-host",
+		PrivateKey: kbytes,
+	}); err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	return pk, nil
+}
+
+func createStorageMiner(ctx context.Context, api v1api.FullNode, ssize abi.SectorSize, peerid peer.ID, _ types.BigInt, confidence uint64, cctx *cli.Context) (address.Address, error) {
+	var err error
+	var owner address.Address
+	if cctx.String("owner") != "" {
+		owner, err = address.NewFromString(cctx.String("owner"))
+	} else {
+		fmt.Println("必须指定 --owner ")
+		return address.Undef, err
+	}
+
+	worker := owner
+	if cctx.String("worker") != "" {
+		worker, err = address.NewFromString(cctx.String("worker"))
+	} else {
+		fmt.Println("必须指定 --worker 且worker必须是 f3 地址")
+		return address.Undef, err
+	}
+
+	// make sure the sender account exists on chain
+	_, err = api.StateLookupID(ctx, owner, types.EmptyTSK)
+	if err != nil {
+		fmt.Printf("钱包地址在链上不存在，请先往地址（%s）转1 fil 然后等3分钟再执行此操作. \n",owner)
+		return address.Undef, xerrors.Errorf("sender must exist on chain: %w", err)
+	}
+
+	// Note: the correct thing to do would be to call SealProofTypeFromSectorSize if actors version is v3 or later, but this still works
+	nv, err := api.StateNetworkVersion(ctx, types.EmptyTSK)
+	if err != nil {
+		fmt.Println(err)
+		return address.Undef, xerrors.Errorf("failed to get network version: %w", err)
+	}
+	spt, err := miner.WindowPoStProofTypeFromSectorSize(ssize, nv)
+	if err != nil {
+		fmt.Println(err)
+		return address.Undef, xerrors.Errorf("getting post proof type: %w", err)
+	}
+
+	params, err := actors.SerializeParams(&power6.CreateMinerParams{
+		Owner:               owner,
+		Worker:              worker,
+		WindowPoStProofType: spt,
+		Peer:                abi.PeerID(peerid),
+	})
+	if err != nil {
+		fmt.Println(err)
+		return address.Undef, err
+	}
+
+	// 本地签名操作： 1 获取地址的nonce， 2 评估gas，3 本地签名，4 推送消息
+	// 1 获取nonce
+	a, err := api.StateGetActor(ctx, owner, types.EmptyTSK)
+	if err != nil {
+		fmt.Printf("读取获取owner地址的nonce失败，err:%v\n", err)
+		return address.Undef, err
+	}
+
+	// 2 评估gas
+	msg, err := api.GasEstimateMessageGas(ctx, &types.Message{
+		From:  owner,
+		To:    power.Address,
+		Value: big.Zero(),
+
+		Method: power.Methods.CreateMiner,
+		Params: params,
+		Nonce:  a.Nonce,
+	}, nil, types.EmptyTSK)
+	if err != nil {
+		fmt.Println("评估消息gas失败，", err)
+		return address.Undef, xerrors.Errorf("mpool push: %w", err)
+	}
+
+	fmt.Printf("\n%+v\n", msg)
+
+	mb, err := msg.ToStorageBlock()
+	if err != nil {
+		fmt.Printf("序列化消息失败， err:%v\n", err)
+		return address.Undef, xerrors.Errorf("serializing message: %w", err)
+	}
+
+	// 3 签名
+	sb, err := signMessage(mb.Cid().Bytes(), msg.From)
+	if err != nil {
+		fmt.Printf("签名失败， err:%v\n", err)
+		return address.Undef, xerrors.Errorf("签名失败: %w", err)
+	}
+
+	// 4 推送消息
+	cid, err := api.MpoolPush(ctx, &types.SignedMessage{Message: *msg, Signature: *sb})
+	if err != nil {
+		fmt.Printf("推送消息上链失败，err:%v\n", err)
+		return address.Undef, xerrors.Errorf("pushing createMiner message: %w", err)
+	}
+
+	fmt.Printf("Pushed CreateMiner message: %s\n", cid.String())
+	fmt.Println("Waiting for confirmation")
+
+	mw, err := api.StateWaitMsg(ctx, cid, confidence, lapi.LookbackNoLimit, true)
+	if err != nil {
+		fmt.Println(xerrors.Errorf("waiting for createMiner message: %w", err))
+		return address.Undef, xerrors.Errorf("waiting for createMiner message: %w", err)
+	}
+
+	if mw.Receipt.ExitCode != 0 {
+		fmt.Println(xerrors.Errorf("create miner failed: exit code %d", mw.Receipt.ExitCode))
+		return address.Undef, xerrors.Errorf("create miner failed: exit code %d", mw.Receipt.ExitCode)
+	}
+
+	var retval power2.CreateMinerReturn
+	if err := retval.UnmarshalCBOR(bytes.NewReader(mw.Receipt.Return)); err != nil {
+		fmt.Println(err)
+		return address.Undef, err
+	}
+
+	fmt.Printf("New miners address is: %s (%s)\n", retval.IDAddress, retval.RobustAddress)
+	return retval.IDAddress, nil
 }

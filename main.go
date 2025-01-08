@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -88,6 +87,8 @@ func _initDb() error {
 	if err != nil {
 		fmt.Printf("初始化程序创建数据库失败！ err:%v\n", err)
 	}
+
+	initNetWork()
 	return err
 }
 
@@ -221,6 +222,20 @@ func _init() error {
 	return nil
 }
 
+func initNetWork() {
+	if strings.Contains(os.Getenv("FULLNODE_API_INFO"), "calibration") {
+		address.CurrentNetwork = address.Testnet
+	}
+	if address.CurrentNetwork == address.Testnet {
+		fmt.Println("当前运行的是测试网")
+	} else if address.CurrentNetwork == address.Mainnet {
+		fmt.Println("当前运行的是主网")
+	} else {
+		fmt.Println("当前运行在未知网络，请检查：环境变量 FULLNODE_API_INFO 的配置! ")
+		os.Exit(1)
+	}
+}
+
 func main() {
 
 	local := []*cli.Command{
@@ -247,6 +262,7 @@ func main() {
 		filplusCmd,
 		commCmd,
 		mpoolCmd,
+		newMinerCmd,
 	}
 
 	app := &cli.App{
@@ -506,7 +522,7 @@ var initCmd = &cli.Command{
 		}
 
 		// 读取助记词
-		keyFileBytes, err := ioutil.ReadFile(cctx.String("key-file"))
+		keyFileBytes, err := os.ReadFile(cctx.String("key-file"))
 		if err != nil {
 			fmt.Printf("从 %s 读取助记词失败。原因: %v\n", cctx.String("key-file"), err.Error())
 			return nil
@@ -657,7 +673,7 @@ var importAddressCmd = &cli.Command{
 			inpdata = indata
 
 		} else {
-			fdata, err := ioutil.ReadFile(cctx.Args().First())
+			fdata, err := os.ReadFile(cctx.Args().First())
 			if err != nil {
 				return err
 			}
@@ -873,7 +889,7 @@ var walletSendBatchCmd = &cli.Command{
 			return nil
 		}
 
-		batchSendBytes, err := ioutil.ReadFile(batchSendFile)
+		batchSendBytes, err := os.ReadFile(batchSendFile)
 		if err != nil {
 			fmt.Printf("open and read file(%s) failed. err:%v\n", "./t", err)
 			return err

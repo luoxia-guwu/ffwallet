@@ -4,3 +4,5 @@ go.sum
 firefly-wallet
 bip39/bip39_test.go
 bip39/bip39_test.go
+.lotuswallettool/
+.git/
