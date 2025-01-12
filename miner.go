@@ -83,9 +83,11 @@ var withdrawCmd = &cli.Command{
 		//  版本判断
 		v, err := api.Version(ctx)
 		if err != nil {
+			fmt.Printf("获取版本信息失败\n")
 			return err
 		}
-		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion1) {
+		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion0) {
+			fmt.Printf("Remote API version didn't match (expected %s, remote %s)\n", lapi.FullAPIVersion1, v.APIVersion)
 			return xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion)
 		}
 
@@ -101,7 +103,7 @@ var withdrawCmd = &cli.Command{
 			fmt.Printf("%s\t%s: error getting account key: %s\n", "owner", owner, err)
 			return err
 		}
-		//fmt.Printf("--->%+v", owner)
+		fmt.Printf("--->%+v", owner)
 
 		// 获取矿工可用余额
 		available, err := api.StateMinerAvailableBalance(ctx, maddr, types.EmptyTSK)
@@ -1092,7 +1094,7 @@ var newMinerCmd = &cli.Command{
 		if err != nil {
 			return err
 		}
-		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion1) {
+		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion0) {
 			fmt.Println(xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion))
 			return xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion)
 		}
