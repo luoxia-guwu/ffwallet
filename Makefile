@@ -11,5 +11,6 @@ clean:
 
 
 firefly-wallet: depend
-	go get --ldflags '-extldflags "-Wl,--allow-multiple-definition"' .
-	go build --ldflags '-extldflags "-Wl,--allow-multiple-definition"'
+	go build ./
+	#go get --ldflags '-extldflags "-Wl,--allow-multiple-definition"' .
+	#go build --ldflags '-extldflags "-Wl,--allow-multiple-definition"'
